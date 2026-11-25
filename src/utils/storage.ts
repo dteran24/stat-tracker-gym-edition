@@ -1,6 +1,7 @@
 import type {
   AppBackupPayload,
   AppSettings,
+  DriveSyncCache,
   EquipmentType,
   StatEntry,
   TrackedExercise,
@@ -9,6 +10,9 @@ import type {
 
 const EXERCISES_KEY = 'gym_stat_tracker_exercises_v2';
 const SETTINGS_KEY = 'gym_stat_tracker_settings_v1';
+const DRIVE_FOLDER_ID_KEY = 'gym_stat_tracker_drive_folder_id_v1';
+const DRIVE_FILE_ID_KEY = 'gym_stat_tracker_drive_file_id_v1';
+const DRIVE_LAST_SYNCED_AT_KEY = 'gym_stat_tracker_last_drive_synced_at_v1';
 
 export function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -85,6 +89,64 @@ export function saveSettings(settings: AppSettings): void {
   } catch {
     // Ignore storage errors
   }
+}
+
+export function loadDriveSyncCache(): DriveSyncCache {
+  try {
+    return {
+      folderId: localStorage.getItem(DRIVE_FOLDER_ID_KEY),
+      fileId: localStorage.getItem(DRIVE_FILE_ID_KEY),
+      lastDriveSyncedAt: localStorage.getItem(DRIVE_LAST_SYNCED_AT_KEY),
+    };
+  } catch {
+    return {
+      folderId: null,
+      fileId: null,
+      lastDriveSyncedAt: null,
+    };
+  }
+}
+
+export function saveDriveFolderId(folderId: string | null): void {
+  try {
+    if (folderId) {
+      localStorage.setItem(DRIVE_FOLDER_ID_KEY, folderId);
+    } else {
+      localStorage.removeItem(DRIVE_FOLDER_ID_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function saveDriveFileId(fileId: string | null): void {
+  try {
+    if (fileId) {
+      localStorage.setItem(DRIVE_FILE_ID_KEY, fileId);
+    } else {
+      localStorage.removeItem(DRIVE_FILE_ID_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function saveLastDriveSyncedAt(isoTimestamp: string | null): void {
+  try {
+    if (isoTimestamp) {
+      localStorage.setItem(DRIVE_LAST_SYNCED_AT_KEY, isoTimestamp);
+    } else {
+      localStorage.removeItem(DRIVE_LAST_SYNCED_AT_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function clearDriveSyncCache(): void {
+  saveDriveFolderId(null);
+  saveDriveFileId(null);
+  saveLastDriveSyncedAt(null);
 }
 
 export function exportBackupJson(
