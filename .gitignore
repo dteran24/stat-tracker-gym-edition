@@ -1,7 +1,6 @@
 node_modules
 dist
 dist-ssr
-.cloudflare
 .env
 *.local
 .DS_Store
