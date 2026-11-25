@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0A0C10" />
+    <title>Privacy Policy — Stat Tracker: Gym Edition</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0a0c10;
+        color: #f3f5f8;
+        line-height: 1.65;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+      }
+      a {
+        color: #f97316;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      h1 {
+        font-size: 1.85rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin: 28px 0 8px;
+        color: #ffffff;
+      }
+      p,
+      li {
+        color: #cbd5e1;
+      }
+      .meta {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin-bottom: 28px;
+      }
+      .card {
+        background: #12161f;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 20px 22px;
+        margin-top: 20px;
+      }
+      code {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 0.9em;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="/">&larr; Back to Stat Tracker — Gym Edition</a></p>
+      <h1>Privacy Policy</h1>
+      <p class="meta">Last updated: November 25, 2026</p>
+
+      <div class="card">
+        <strong>Short version:</strong> Stat Tracker — Gym Edition runs entirely in your browser. We do not operate a backend database, do not collect analytics, and never sell or share your data.
+      </div>
+
+      <h2>1. Data Stored Locally</h2>
+      <p>
+        Your workout exercises, weights, reps, notes, and unit preferences are stored locally in your browser using <code>localStorage</code>. This data never leaves your device unless you explicitly choose to export a JSON file or sync with Google Drive.
+      </p>
+
+      <h2>2. Optional Google Drive Sync</h2>
+      <p>
+        If you choose to use Google Drive Sync, the app signs you in using Google Identity Services directly from your browser and requests only the minimal <code>https://www.googleapis.com/auth/drive.file</code> scope.
+      </p>
+      <ul>
+        <li>The app can only create, read, and update its own backup file (<code>stat-tracker-backup.json</code> inside a <code>Stat Tracker Gym</code> folder in your Google Drive).</li>
+        <li>The app cannot view, modify, or access any other files in your Google Drive.</li>
+        <li>Access tokens are held only in browser memory during your session and are never sent to any third-party server.</li>
+      </ul>
+
+      <h2>3. Data Sharing &amp; Third Parties</h2>
+      <p>
+        We do not collect, store, transmit, sell, or share your personal data or Google user data with any third parties. Your data stays strictly on your device and, if enabled by you, in your own Google Drive account.
+      </p>
+
+      <h2>4. Deleting Your Data &amp; Revoking Access</h2>
+      <ul>
+        <li>You can clear local data anytime via your browser settings or inside the app.</li>
+        <li>You can delete the <code>Stat Tracker Gym</code> folder directly in your Google Drive.</li>
+        <li>You can revoke the app's Google Drive permission anytime at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer">myaccount.google.com/permissions</a>.</li>
+      </ul>
+
+      <h2>5. Contact</h2>
+      <p>
+        If you have questions about this privacy policy, contact <a href="mailto:dt27627@gmail.com">dt27627@gmail.com</a>.
+      </p>
+    </main>
+  </body>
+</html>
