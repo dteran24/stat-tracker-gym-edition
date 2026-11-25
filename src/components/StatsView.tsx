@@ -7,8 +7,17 @@ import {
   getEntryWeightInUnit,
 } from '../utils/stats';
 import { exportBackupJson, getTodayIso } from '../utils/storage';
+import { formatDriveTimestamp } from '../utils/googleDrive';
 import { DeltaBadge } from './DeltaBadge';
-import { DownloadIcon, TrendDownIcon, TrendUpIcon, UploadIcon } from './Icons';
+import {
+  CloudDownloadIcon,
+  CloudIcon,
+  CloudUploadIcon,
+  DownloadIcon,
+  TrendDownIcon,
+  TrendUpIcon,
+  UploadIcon,
+} from './Icons';
 
 interface StatsViewProps {
   exercises: TrackedExercise[];
@@ -16,6 +25,12 @@ interface StatsViewProps {
   onChangeUnit: (unit: WeightUnit) => void;
   onImportJson: (jsonText: string) => void;
   onOpenExercise: (exerciseId: string) => void;
+  driveConfigured: boolean;
+  driveBusyAction: 'sync' | 'restore' | null;
+  lastDriveSyncedAt: string | null;
+  onSyncToDrive: () => void;
+  onRestoreFromDrive: () => void;
+  onDisconnectDrive: () => void;
 }
 
 export function StatsView({
@@ -24,6 +39,12 @@ export function StatsView({
   onChangeUnit,
   onImportJson,
   onOpenExercise,
+  driveConfigured,
+  driveBusyAction,
+  lastDriveSyncedAt,
+  onSyncToDrive,
+  onRestoreFromDrive,
+  onDisconnectDrive,
 }: StatsViewProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const unit = settings.unit;
@@ -189,10 +210,77 @@ export function StatsView({
         )}
       </section>
 
+      {/* Google Drive Cloud Sync */}
+      <section className="card-surface rounded-2xl p-4 space-y-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <CloudIcon className="w-4 h-4 text-[#F97316] shrink-0" />
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[#F3F5F8]">
+                Google Drive Sync
+              </h3>
+              <p className="text-[11px] text-[#8E98A8]">
+                Manual backup to <span className="font-mono text-[#C5CDD9]">Stat Tracker Gym</span> folder
+              </p>
+            </div>
+          </div>
+
+          {driveConfigured && lastDriveSyncedAt && (
+            <button
+              type="button"
+              onClick={onDisconnectDrive}
+              disabled={driveBusyAction !== null}
+              className="text-[11px] font-semibold text-[#8E98A8] hover:text-[#F3F5F8] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Reset Link
+            </button>
+          )}
+        </div>
+
+        {driveConfigured ? (
+          <>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={onSyncToDrive}
+                disabled={driveBusyAction !== null}
+                className="h-10 px-3 rounded-xl bg-[#F97316] hover:bg-[#FB923C] disabled:opacity-60 text-xs font-bold text-[#0A0C10] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <CloudUploadIcon className="w-4 h-4" />
+                {driveBusyAction === 'sync' ? 'Syncing…' : 'Sync to Drive'}
+              </button>
+
+              <button
+                type="button"
+                onClick={onRestoreFromDrive}
+                disabled={driveBusyAction !== null}
+                className="h-10 px-3 rounded-xl bg-white/[0.06] hover:bg-white/10 disabled:opacity-60 border border-white/10 text-xs font-semibold text-[#F3F5F8] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <CloudDownloadIcon className="w-4 h-4 text-[#22C55E]" />
+                {driveBusyAction === 'restore' ? 'Loading…' : 'Restore from Drive'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 text-[11px] text-[#8E98A8] pt-0.5">
+              <span>Last synced</span>
+              <span className="font-mono text-[#C5CDD9]">
+                {formatDriveTimestamp(lastDriveSyncedAt)}
+              </span>
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-[#8E98A8] rounded-xl bg-[#0D1016] border border-white/[0.08] p-3">
+            Google Drive sync is unavailable because{' '}
+            <code className="font-mono text-[#C5CDD9]">VITE_GOOGLE_CLIENT_ID</code> is not set.
+            Local storage and manual JSON export/import below continue to work offline.
+          </p>
+        )}
+      </section>
+
       {/* Preferences & Data Backup */}
       <section className="card-surface rounded-2xl p-4 space-y-4">
         <h3 className="text-xs font-bold uppercase tracking-wider text-[#8E98A8]">
-          Settings &amp; Backup
+          Settings &amp; Local Backup
         </h3>
 
         <div className="flex items-center justify-between gap-3">

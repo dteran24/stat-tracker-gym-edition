@@ -9,17 +9,32 @@ import type {
   WeightUnit,
 } from './types';
 import { BottomNav } from './components/BottomNav';
+import {
+  DriveConfirmModal,
+  type DriveDialogState,
+} from './components/DriveConfirmModal';
 import { EntryModal, type ModalMode } from './components/EntryModal';
 import { ExerciseDetailView } from './components/ExerciseDetailView';
 import { ExerciseListView } from './components/ExerciseListView';
 import { DumbbellIcon } from './components/Icons';
 import { StatsView } from './components/StatsView';
 import {
+  disconnectGoogleDrive,
+  downloadBackupFromDrive,
+  DriveActionCancelledError,
+  inspectDriveBeforeSync,
+  isGoogleDriveConfigured,
+  requestDriveAccessToken,
+  uploadBackupToDrive,
+} from './utils/googleDrive';
+import {
   createId,
+  loadDriveSyncCache,
   loadExercises,
   loadSettings,
   parseBackupJson,
   saveExercises,
+  saveLastDriveSyncedAt,
   saveSettings,
   sortEntriesDesc,
   sortExercisesRecentDesc,
@@ -37,6 +52,12 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [driveBusyAction, setDriveBusyAction] = useState<'sync' | 'restore' | null>(null);
+  const [driveDialog, setDriveDialog] = useState<DriveDialogState | null>(null);
+  const [lastDriveSyncedAt, setLastDriveSyncedAt] = useState<string | null>(
+    () => loadDriveSyncCache().lastDriveSyncedAt
+  );
+  const driveConfigured = isGoogleDriveConfigured();
 
   useEffect(() => {
     saveExercises(exercises);
@@ -297,6 +318,114 @@ export default function App() {
     }
   };
 
+  const handleSyncToDrive = async () => {
+    if (driveBusyAction) return;
+    setDriveBusyAction('sync');
+    try {
+      const token = await requestDriveAccessToken();
+      const inspection = await inspectDriveBeforeSync(token, exercises.length);
+
+      if (inspection.conflictReason && inspection.remoteFile) {
+        setDriveDialog({
+          type: 'sync-conflict',
+          reason: inspection.conflictReason,
+          remoteFile: inspection.remoteFile,
+          lastDriveSyncedAt: inspection.lastDriveSyncedAt,
+        });
+        return;
+      }
+
+      const saved = await uploadBackupToDrive(
+        token,
+        exercises,
+        settings,
+        inspection.remoteFile?.id ?? null
+      );
+      setLastDriveSyncedAt(saved.modifiedTime);
+      showToast('Synced backup to Google Drive!');
+    } catch (err) {
+      if (err instanceof DriveActionCancelledError) {
+        showToast(err.message, 'error');
+      } else {
+        const msg = err instanceof Error ? err.message : 'Failed to sync to Google Drive.';
+        showToast(msg, 'error');
+      }
+    } finally {
+      setDriveBusyAction(null);
+    }
+  };
+
+  const handleConfirmOverwriteDrive = async () => {
+    if (driveDialog?.type !== 'sync-conflict' || driveBusyAction) return;
+    const remoteFileId = driveDialog.remoteFile.id;
+    setDriveDialog(null);
+    setDriveBusyAction('sync');
+    try {
+      const token = await requestDriveAccessToken();
+      const saved = await uploadBackupToDrive(token, exercises, settings, remoteFileId);
+      setLastDriveSyncedAt(saved.modifiedTime);
+      showToast('Overwrote Google Drive backup!');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to overwrite Google Drive backup.';
+      showToast(msg, 'error');
+    } finally {
+      setDriveBusyAction(null);
+    }
+  };
+
+  const handleRestoreFromDrive = async () => {
+    if (driveBusyAction) return;
+    setDriveDialog(null);
+    setDriveBusyAction('restore');
+    try {
+      const token = await requestDriveAccessToken();
+      const backup = await downloadBackupFromDrive(token);
+      if (!backup) {
+        showToast('No backup found in Google Drive yet.', 'error');
+        return;
+      }
+      setDriveDialog({
+        type: 'confirm-restore',
+        backup,
+      });
+    } catch (err) {
+      if (err instanceof DriveActionCancelledError) {
+        showToast(err.message, 'error');
+      } else {
+        const msg =
+          err instanceof Error ? err.message : 'Failed to load backup from Google Drive.';
+        showToast(msg, 'error');
+      }
+    } finally {
+      setDriveBusyAction(null);
+    }
+  };
+
+  const handleConfirmRestore = () => {
+    if (driveDialog?.type !== 'confirm-restore') return;
+    const { backup } = driveDialog;
+    setExercises(backup.exercises);
+    if (backup.settings) {
+      setSettings(backup.settings);
+    }
+    if (
+      selectedExerciseId &&
+      !backup.exercises.some((ex) => ex.id === selectedExerciseId)
+    ) {
+      setSelectedExerciseId(null);
+    }
+    saveLastDriveSyncedAt(backup.modifiedTime);
+    setLastDriveSyncedAt(backup.modifiedTime);
+    setDriveDialog(null);
+    showToast(`Restored ${backup.exercises.length} workout(s) from Google Drive!`);
+  };
+
+  const handleDisconnectDrive = () => {
+    disconnectGoogleDrive();
+    setLastDriveSyncedAt(null);
+    showToast('Reset Google Drive link.');
+  };
+
   const handleOpenExercise = (exerciseId: string) => {
     setSelectedExerciseId(exerciseId);
     setActiveTab('exercises');
@@ -389,6 +518,12 @@ export default function App() {
             onChangeUnit={handleUnitChange}
             onImportJson={handleImportJson}
             onOpenExercise={handleOpenExercise}
+            driveConfigured={driveConfigured}
+            driveBusyAction={driveBusyAction}
+            lastDriveSyncedAt={lastDriveSyncedAt}
+            onSyncToDrive={handleSyncToDrive}
+            onRestoreFromDrive={handleRestoreFromDrive}
+            onDisconnectDrive={handleDisconnectDrive}
           />
         )}
       </main>
@@ -402,6 +537,17 @@ export default function App() {
         onSubmitLogUpdate={handleLogUpdate}
         onSubmitEditEntry={handleEditEntry}
         onSubmitEditExercise={handleEditExercise}
+      />
+
+      {/* Google Drive Conflict / Restore Confirmation Modal */}
+      <DriveConfirmModal
+        dialog={driveDialog}
+        localExerciseCount={exercises.length}
+        localEntryCount={exercises.reduce((sum, ex) => sum + ex.entries.length, 0)}
+        onClose={() => setDriveDialog(null)}
+        onConfirmOverwriteDrive={handleConfirmOverwriteDrive}
+        onRestoreInstead={handleRestoreFromDrive}
+        onConfirmRestore={handleConfirmRestore}
       />
 
       {/* Toast Notification */}
