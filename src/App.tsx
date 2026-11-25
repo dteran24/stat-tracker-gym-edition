@@ -264,13 +264,33 @@ export default function App() {
       setExercises((prev) => {
         const byId = new Map<string, TrackedExercise>();
         for (const ex of prev) byId.set(ex.id, ex);
-        for (const ex of imported.exercises) byId.set(ex.id, ex);
+
+        for (const incoming of imported.exercises) {
+          const existing = byId.get(incoming.id);
+          if (!existing) {
+            byId.set(incoming.id, incoming);
+          } else {
+            const entriesById = new Map<string, StatEntry>();
+            for (const entry of existing.entries) entriesById.set(entry.id, entry);
+            for (const entry of incoming.entries) entriesById.set(entry.id, entry);
+            const mergedEntries = Array.from(entriesById.values()).sort(sortEntriesDesc);
+
+            byId.set(incoming.id, {
+              ...existing,
+              ...incoming,
+              entries: mergedEntries,
+              createdAt: Math.min(existing.createdAt, incoming.createdAt),
+              updatedAt: Math.max(existing.updatedAt, incoming.updatedAt),
+            });
+          }
+        }
+
         return Array.from(byId.values()).sort(sortExercisesRecentDesc);
       });
       if (imported.settings) {
         setSettings(imported.settings);
       }
-      showToast(`Imported ${imported.exercises.length} workout(s)!`);
+      showToast(`Imported & merged ${imported.exercises.length} workout(s)!`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to import JSON file.';
       showToast(msg, 'error');
