@@ -152,6 +152,16 @@ function isValidUnit(val: unknown): val is WeightUnit {
   return val === 'lbs' || val === 'kg';
 }
 
+function isValidWeightMode(val: unknown): boolean {
+  return (
+    val === undefined ||
+    val === 'direct' ||
+    val === 'barbell' ||
+    val === 'plates-single' ||
+    val === 'plates-dual'
+  );
+}
+
 function isValidStatEntry(val: unknown): val is StatEntry {
   if (!val || typeof val !== 'object') return false;
   const e = val as Record<string, unknown>;
@@ -162,6 +172,7 @@ function isValidStatEntry(val: unknown): val is StatEntry {
     typeof e.id === 'string' &&
     validWeight &&
     isValidUnit(e.unit) &&
+    (e.weightDetail === undefined || typeof e.weightDetail === 'string') &&
     typeof e.reps === 'number' &&
     Number.isFinite(e.reps) &&
     e.reps > 0 &&
@@ -181,6 +192,10 @@ function isValidExercise(val: unknown): val is TrackedExercise {
     typeof ex.name === 'string' &&
     ex.name.trim().length > 0 &&
     isValidEquipment(ex.equipment) &&
+    isValidWeightMode(ex.weightMode) &&
+    (ex.barWeight === undefined ||
+      (typeof ex.barWeight === 'number' && Number.isFinite(ex.barWeight) && ex.barWeight >= 0)) &&
+    (ex.barWeightUnit === undefined || isValidUnit(ex.barWeightUnit)) &&
     Array.isArray(ex.entries) &&
     ex.entries.every(isValidStatEntry) &&
     typeof ex.createdAt === 'number' &&

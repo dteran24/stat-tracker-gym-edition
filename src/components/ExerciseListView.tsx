@@ -5,6 +5,7 @@ import {
   formatFullDate,
   formatWeightLabel,
   getEntryWeightInUnit,
+  getWeightModeLabel,
 } from '../utils/stats';
 import { DeltaBadge } from './DeltaBadge';
 import {
@@ -199,21 +200,33 @@ export function ExerciseListView({
                         )}
                         {exercise.equipment === 'machine' ? 'Machine' : 'No Machine'}
                       </span>
+                      {exercise.weightMode && exercise.weightMode !== 'direct' && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#F97316]/10 text-[#FB923C] border border-[#F97316]/20">
+                          {getWeightModeLabel(exercise.weightMode)}
+                        </span>
+                      )}
                     </div>
 
                     {latest ? (
-                      <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
-                        <span className="text-xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
-                          {formatWeightLabel(latestWeight, unit)}
-                        </span>
-                        <span className="text-xs font-semibold text-[#5C6677]">×</span>
-                        <span className="text-xl font-extrabold font-mono tabular-nums text-[#F97316]">
-                          {latest.reps}
-                          <span className="text-xs font-sans font-semibold text-[#8E98A8] ml-1">
-                            {latest.reps === 1 ? 'rep' : 'reps'}
+                      <>
+                        <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
+                          <span className="text-xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
+                            {formatWeightLabel(latestWeight, unit)}
                           </span>
-                        </span>
-                      </div>
+                          <span className="text-xs font-semibold text-[#5C6677]">×</span>
+                          <span className="text-xl font-extrabold font-mono tabular-nums text-[#F97316]">
+                            {latest.reps}
+                            <span className="text-xs font-sans font-semibold text-[#8E98A8] ml-1">
+                              {latest.reps === 1 ? 'rep' : 'reps'}
+                            </span>
+                          </span>
+                        </div>
+                        {latest.weightDetail && (
+                          <p className="mt-0.5 text-[11px] font-mono text-[#5C6677]">
+                            {latest.weightDetail}
+                          </p>
+                        )}
+                      </>
                     ) : (
                       <p className="mt-2 text-xs text-[#5C6677]">No entries yet</p>
                     )}

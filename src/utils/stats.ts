@@ -1,6 +1,128 @@
-import type { EntryComparison, StatEntry, TrackedExercise, WeightUnit } from '../types';
+import type {
+  EntryComparison,
+  StatEntry,
+  TrackedExercise,
+  WeightMode,
+  WeightUnit,
+} from '../types';
 
 const LBS_PER_KG = 2.2046226218;
+
+export function getDefaultBarWeight(unit: WeightUnit): number {
+  return unit === 'kg' ? 20 : 45;
+}
+
+export function getPlatePresets(unit: WeightUnit): number[] {
+  return unit === 'kg' ? [20, 15, 10, 5, 2.5, 1.25] : [45, 35, 25, 10, 5, 2.5];
+}
+
+export function getExerciseBarWeightInUnit(
+  exercise: TrackedExercise | undefined,
+  displayUnit: WeightUnit
+): number {
+  if (!exercise || exercise.barWeight === undefined) {
+    return getDefaultBarWeight(displayUnit);
+  }
+  const storedUnit = exercise.barWeightUnit ?? displayUnit;
+  return convertWeight(exercise.barWeight, storedUnit, displayUnit);
+}
+
+export function getWeightModeLabel(mode: WeightMode | undefined): string {
+  switch (mode) {
+    case 'barbell':
+      return 'Barbell';
+    case 'plates-single':
+      return 'Plates (1×)';
+    case 'plates-dual':
+      return 'Per Side (2×)';
+    default:
+      return 'Total';
+  }
+}
+
+/**
+ * Safely parses a plate/weight addition expression such as "45 + 45" or "45+25+10".
+ * Returns null if invalid or empty.
+ */
+export function parseWeightExpression(
+  raw: string
+): { sum: number; parts: number[]; normalizedExpr: string } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const tokens = trimmed.split('+').map((t) => t.trim());
+  if (tokens.some((t) => t === '')) return null;
+
+  const parts: number[] = [];
+  for (const token of tokens) {
+    const num = Number(token);
+    if (!Number.isFinite(num) || num < 0) return null;
+    parts.push(Math.round(num * 100) / 100);
+  }
+
+  const sum = Math.round(parts.reduce((acc, n) => acc + n, 0) * 10) / 10;
+  const normalizedExpr = parts.map((p) => formatNumber(p)).join(' + ');
+  return { sum, parts, normalizedExpr };
+}
+
+export interface WeightCalculationResult {
+  total: number;
+  sideSum: number;
+  formula: string;
+  detail?: string;
+}
+
+/**
+ * Calculates total weight from an expression + weight mode.
+ * - direct: "135" -> 135, "45 + 45" -> 90
+ * - barbell: "45 + 45" (with 45 bar) -> 45 + (90 * 2) = 225
+ * - plates-single: "45 + 45" -> 90 (e.g. T-Bar Row)
+ * - plates-dual: "45 + 45" -> 90 * 2 = 180 (e.g. Leg Press / per-side plate loaded)
+ */
+export function calculateWeightFromExpression(
+  raw: string,
+  mode: WeightMode,
+  barWeight: number,
+  unit: WeightUnit
+): WeightCalculationResult | null {
+  const parsed = parseWeightExpression(raw);
+  if (!parsed) return null;
+
+  const { sum, parts, normalizedExpr } = parsed;
+  const safeBar = Number.isFinite(barWeight) && barWeight >= 0 ? barWeight : 0;
+
+  if (mode === 'barbell') {
+    const total = Math.round((safeBar + sum * 2) * 10) / 10;
+    const sideExpr = parts.length > 1 ? `(${normalizedExpr})` : normalizedExpr;
+    const formula = `${formatNumber(safeBar)} bar + ${sideExpr} × 2 = ${formatNumber(total)} ${unit}`;
+    const detail = `${normalizedExpr} / side + ${formatNumber(safeBar)} ${unit} bar`;
+    return { total, sideSum: sum, formula, detail };
+  }
+
+  if (mode === 'plates-dual') {
+    const total = Math.round(sum * 2 * 10) / 10;
+    const sideExpr = parts.length > 1 ? `(${normalizedExpr})` : normalizedExpr;
+    const formula = `${sideExpr} × 2 = ${formatNumber(total)} ${unit}`;
+    const detail = `${normalizedExpr} / side × 2`;
+    return { total, sideSum: sum, formula, detail };
+  }
+
+  if (mode === 'plates-single') {
+    const total = sum;
+    const formula = `${normalizedExpr} = ${formatNumber(total)} ${unit}`;
+    const detail = parts.length > 1 ? `${normalizedExpr} plates` : undefined;
+    return { total, sideSum: sum, formula, detail };
+  }
+
+  // direct mode (still supports "45 + 45" convenience)
+  const total = sum;
+  const formula =
+    parts.length > 1
+      ? `${normalizedExpr} = ${formatNumber(total)} ${unit}`
+      : `${formatNumber(total)} ${unit}`;
+  const detail = parts.length > 1 ? normalizedExpr : undefined;
+  return { total, sideSum: sum, formula, detail };
+}
 
 export function convertWeight(
   value: number,

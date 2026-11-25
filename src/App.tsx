@@ -5,6 +5,7 @@ import type {
   EquipmentType,
   StatEntry,
   TrackedExercise,
+  WeightMode,
   WeightUnit,
 } from './types';
 import { BottomNav } from './components/BottomNav';
@@ -71,7 +72,10 @@ export default function App() {
   const handleCreateExercise = (payload: {
     name: string;
     equipment: EquipmentType;
+    weightMode: WeightMode;
+    barWeight?: number;
     weight: number | null;
+    weightDetail?: string;
     reps: number;
     date: string;
     note: string;
@@ -81,6 +85,7 @@ export default function App() {
       id: createId(),
       weight: payload.weight,
       unit: settings.unit,
+      weightDetail: payload.weightDetail,
       reps: payload.reps,
       date: payload.date,
       note: payload.note || undefined,
@@ -92,6 +97,9 @@ export default function App() {
       id: createId(),
       name: payload.name,
       equipment: payload.equipment,
+      weightMode: payload.weightMode,
+      barWeight: payload.barWeight,
+      barWeightUnit: payload.barWeight !== undefined ? settings.unit : undefined,
       entries: [initialEntry],
       createdAt: now,
       updatedAt: now,
@@ -104,13 +112,22 @@ export default function App() {
 
   const handleLogUpdate = (
     exerciseId: string,
-    payload: { weight: number | null; reps: number; date: string; note: string }
+    payload: {
+      weight: number | null;
+      weightDetail?: string;
+      weightMode: WeightMode;
+      barWeight?: number;
+      reps: number;
+      date: string;
+      note: string;
+    }
   ) => {
     const now = Date.now();
     const newEntry: StatEntry = {
       id: createId(),
       weight: payload.weight,
       unit: settings.unit,
+      weightDetail: payload.weightDetail,
       reps: payload.reps,
       date: payload.date,
       note: payload.note || undefined,
@@ -124,6 +141,10 @@ export default function App() {
           ex.id === exerciseId
             ? {
                 ...ex,
+                weightMode: payload.weightMode,
+                barWeight: payload.barWeight,
+                barWeightUnit:
+                  payload.barWeight !== undefined ? settings.unit : undefined,
                 entries: [newEntry, ...ex.entries].sort(sortEntriesDesc),
                 updatedAt: now,
               }
@@ -139,7 +160,13 @@ export default function App() {
   const handleEditEntry = (
     exerciseId: string,
     entryId: string,
-    payload: { weight: number | null; reps: number; date: string; note: string }
+    payload: {
+      weight: number | null;
+      weightDetail?: string;
+      reps: number;
+      date: string;
+      note: string;
+    }
   ) => {
     const now = Date.now();
     setExercises((prev) =>
@@ -155,6 +182,7 @@ export default function App() {
                           ...entry,
                           weight: payload.weight,
                           unit: settings.unit,
+                          weightDetail: payload.weightDetail,
                           reps: payload.reps,
                           date: payload.date,
                           note: payload.note || undefined,
@@ -194,7 +222,12 @@ export default function App() {
 
   const handleEditExercise = (
     exerciseId: string,
-    payload: { name: string; equipment: EquipmentType }
+    payload: {
+      name: string;
+      equipment: EquipmentType;
+      weightMode: WeightMode;
+      barWeight?: number;
+    }
   ) => {
     const now = Date.now();
     setExercises((prev) =>
@@ -204,6 +237,10 @@ export default function App() {
               ...ex,
               name: payload.name,
               equipment: payload.equipment,
+              weightMode: payload.weightMode,
+              barWeight: payload.barWeight,
+              barWeightUnit:
+                payload.barWeight !== undefined ? settings.unit : undefined,
               updatedAt: now,
             }
           : ex

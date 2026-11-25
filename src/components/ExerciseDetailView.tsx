@@ -6,6 +6,7 @@ import {
   formatWeightLabel,
   getAllTimeBestEntry,
   getEntryWeightInUnit,
+  getWeightModeLabel,
   isBodyweightOnly,
 } from '../utils/stats';
 import { DeltaBadge } from './DeltaBadge';
@@ -135,7 +136,7 @@ export function ExerciseDetailView({
                 {exercise.name}
               </h2>
             </div>
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white/[0.05] text-[#8E98A8] border border-white/[0.08]">
                 {exercise.equipment === 'machine' ? (
                   <MachineIcon className="w-3 h-3" />
@@ -144,6 +145,11 @@ export function ExerciseDetailView({
                 )}
                 {exercise.equipment === 'machine' ? 'Machine' : 'No Machine'}
               </span>
+              {exercise.weightMode && exercise.weightMode !== 'direct' && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#F97316]/10 text-[#FB923C] border border-[#F97316]/20">
+                  {getWeightModeLabel(exercise.weightMode)}
+                </span>
+              )}
               <span className="text-[11px] text-[#5C6677] font-mono">
                 {exercise.entries.length}{' '}
                 {exercise.entries.length === 1 ? 'entry' : 'entries'}
@@ -301,6 +307,12 @@ export function ExerciseDetailView({
                           </span>
                         </span>
                       </div>
+
+                      {entry.weightDetail && (
+                        <p className="text-[11px] font-mono text-[#5C6677]">
+                          {entry.weightDetail}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
