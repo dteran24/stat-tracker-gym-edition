@@ -1,18 +1,16 @@
 import type { ActiveTab } from '../types';
-import { ChartIcon, DumbbellIcon, HistoryIcon } from './Icons';
+import { ChartIcon, DumbbellIcon } from './Icons';
 
 interface BottomNavProps {
   activeTab: ActiveTab;
   onChange: (tab: ActiveTab) => void;
-  draftExerciseCount: number;
-  workoutCount: number;
+  exerciseCount: number;
 }
 
 export function BottomNav({
   activeTab,
   onChange,
-  draftExerciseCount,
-  workoutCount,
+  exerciseCount,
 }: BottomNavProps) {
   const tabs: Array<{
     id: ActiveTab;
@@ -21,20 +19,14 @@ export function BottomNav({
     badge?: number;
   }> = [
     {
-      id: 'log',
-      label: 'Log',
+      id: 'exercises',
+      label: 'Workouts',
       icon: DumbbellIcon,
-      badge: draftExerciseCount > 0 ? draftExerciseCount : undefined,
-    },
-    {
-      id: 'history',
-      label: 'History',
-      icon: HistoryIcon,
-      badge: workoutCount > 0 ? workoutCount : undefined,
+      badge: exerciseCount > 0 ? exerciseCount : undefined,
     },
     {
       id: 'stats',
-      label: 'Stats',
+      label: 'Overview',
       icon: ChartIcon,
     },
   ];
@@ -44,7 +36,7 @@ export function BottomNav({
       aria-label="Primary navigation"
       className="fixed bottom-0 inset-x-0 z-40 bg-[#0D1017]/95 backdrop-blur-md border-t border-white/10 safe-bottom"
     >
-      <div className="mx-auto max-w-lg grid grid-cols-3 px-2 pt-1.5">
+      <div className="mx-auto max-w-lg grid grid-cols-2 px-4 pt-1.5">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -64,7 +56,7 @@ export function BottomNav({
                 <Icon className="w-5 h-5" />
                 {tab.badge !== undefined && (
                   <span
-                    className={`absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold font-mono tabular-nums flex items-center justify-center ${
+                    className={`absolute -top-1.5 -right-3 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold font-mono tabular-nums flex items-center justify-center ${
                       isActive
                         ? 'bg-[#F97316] text-[#0A0C10]'
                         : 'bg-[#212836] text-[#C5CDD9]'

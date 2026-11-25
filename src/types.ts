@@ -1,37 +1,40 @@
 export type EquipmentType = 'machine' | 'no-machine';
 export type EquipmentFilter = 'all' | EquipmentType;
 export type WeightUnit = 'lbs' | 'kg';
-export type ActiveTab = 'log' | 'history' | 'stats';
+export type ActiveTab = 'exercises' | 'stats';
+export type ChangeDirection = 'up' | 'down' | 'mixed' | 'same' | 'initial';
+export type SortMode = 'recent' | 'name' | 'entries';
 
-export interface SetEntry {
+export interface StatEntry {
   id: string;
-  weight: string;
-  reps: string;
-  completed: boolean;
-}
-
-export interface ExerciseEntry {
-  id: string;
-  name: string;
-  equipment: EquipmentType;
-  sets: SetEntry[];
-}
-
-export interface Workout {
-  id: string;
-  title: string;
-  date: string; // YYYY-MM-DD
+  /** Weight lifted in `unit`, or null for bodyweight / reps-only exercises */
+  weight: number | null;
   unit: WeightUnit;
-  exercises: ExerciseEntry[];
+  reps: number;
+  /** YYYY-MM-DD date when this stat was recorded/updated */
+  date: string;
+  note?: string;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface WorkoutDraft {
-  editingId: string | null;
-  title: string;
-  date: string;
-  exercises: ExerciseEntry[];
+export interface TrackedExercise {
+  id: string;
+  name: string;
+  equipment: EquipmentType;
+  /** Sorted newest-first by date desc, then createdAt desc */
+  entries: StatEntry[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EntryComparison {
+  direction: ChangeDirection;
+  /** Difference in displayUnit (null if either entry is bodyweight) */
+  weightDelta: number | null;
+  repsDelta: number;
+  /** Set when switching between bodyweight and weighted */
+  weightTransition?: 'added-weight' | 'to-bodyweight';
 }
 
 export interface AppSettings {
@@ -39,26 +42,8 @@ export interface AppSettings {
 }
 
 export interface AppBackupPayload {
-  version: 1;
+  version: 2;
   exportedAt: string;
   settings: AppSettings;
-  workouts: Workout[];
-}
-
-export interface ExerciseSuggestion {
-  name: string;
-  equipment: EquipmentType;
-  usageCount: number;
-}
-
-export interface ExerciseProgressPoint {
-  date: string;
-  workoutId: string;
-  workoutTitle: string;
-  maxWeight: number;
-  bestEst1RM: number;
-  totalVolume: number;
-  bestSetReps: number;
-  bestSetWeight: number;
-  totalSets: number;
+  exercises: TrackedExercise[];
 }

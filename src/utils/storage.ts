@@ -2,16 +2,13 @@ import type {
   AppBackupPayload,
   AppSettings,
   EquipmentType,
-  ExerciseEntry,
-  SetEntry,
+  StatEntry,
+  TrackedExercise,
   WeightUnit,
-  Workout,
-  WorkoutDraft,
 } from '../types';
 
-const WORKOUTS_KEY = 'gym_stat_tracker_workouts_v1';
+const EXERCISES_KEY = 'gym_stat_tracker_exercises_v2';
 const SETTINGS_KEY = 'gym_stat_tracker_settings_v1';
-const DRAFT_KEY = 'gym_stat_tracker_draft_v1';
 
 export function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -28,39 +25,42 @@ export function getTodayIso(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function createEmptySet(weight = '', reps = ''): SetEntry {
-  return {
-    id: createId(),
-    weight,
-    reps,
-    completed: false,
-  };
+export function sortEntriesDesc(a: StatEntry, b: StatEntry): number {
+  if (a.date !== b.date) return b.date.localeCompare(a.date);
+  return b.createdAt - a.createdAt;
 }
 
-export function createEmptyDraft(): WorkoutDraft {
-  return {
-    editingId: null,
-    title: '',
-    date: getTodayIso(),
-    exercises: [],
-  };
+export function sortExercisesRecentDesc(
+  a: TrackedExercise,
+  b: TrackedExercise
+): number {
+  const aDate = a.entries[0]?.date ?? '';
+  const bDate = b.entries[0]?.date ?? '';
+  if (aDate !== bDate) return bDate.localeCompare(aDate);
+  return b.updatedAt - a.updatedAt;
 }
 
-export function loadWorkouts(): Workout[] {
+export function loadExercises(): TrackedExercise[] {
   try {
-    const raw = localStorage.getItem(WORKOUTS_KEY);
+    const raw = localStorage.getItem(EXERCISES_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidWorkout).sort(sortWorkoutsDesc);
+    return parsed
+      .filter(isValidExercise)
+      .map((ex) => ({
+        ...ex,
+        entries: [...ex.entries].sort(sortEntriesDesc),
+      }))
+      .sort(sortExercisesRecentDesc);
   } catch {
     return [];
   }
 }
 
-export function saveWorkouts(workouts: Workout[]): void {
+export function saveExercises(exercises: TrackedExercise[]): void {
   try {
-    localStorage.setItem(WORKOUTS_KEY, JSON.stringify(workouts));
+    localStorage.setItem(EXERCISES_KEY, JSON.stringify(exercises));
   } catch {
     // Ignore storage quota / private mode errors gracefully
   }
@@ -87,70 +87,46 @@ export function saveSettings(settings: AppSettings): void {
   }
 }
 
-export function loadDraft(): WorkoutDraft {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return createEmptyDraft();
-    const parsed = JSON.parse(raw) as Partial<WorkoutDraft>;
-    if (!parsed || !Array.isArray(parsed.exercises)) return createEmptyDraft();
-    return {
-      editingId: typeof parsed.editingId === 'string' ? parsed.editingId : null,
-      title: typeof parsed.title === 'string' ? parsed.title : '',
-      date: typeof parsed.date === 'string' && parsed.date ? parsed.date : getTodayIso(),
-      exercises: parsed.exercises.filter(isValidExercise),
-    };
-  } catch {
-    return createEmptyDraft();
-  }
-}
-
-export function saveDraft(draft: WorkoutDraft): void {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-export function clearDraft(): void {
-  try {
-    localStorage.removeItem(DRAFT_KEY);
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-export function exportBackupJson(workouts: Workout[], settings: AppSettings): string {
+export function exportBackupJson(
+  exercises: TrackedExercise[],
+  settings: AppSettings
+): string {
   const payload: AppBackupPayload = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     settings,
-    workouts,
+    exercises,
   };
   return JSON.stringify(payload, null, 2);
 }
 
 export function parseBackupJson(rawText: string): {
-  workouts: Workout[];
+  exercises: TrackedExercise[];
   settings?: AppSettings;
 } {
   const parsed: unknown = JSON.parse(rawText);
 
   if (Array.isArray(parsed)) {
-    const valid = parsed.filter(isValidWorkout);
+    const valid = parsed.filter(isValidExercise).map((ex) => ({
+      ...ex,
+      entries: [...ex.entries].sort(sortEntriesDesc),
+    }));
     if (valid.length === 0 && parsed.length > 0) {
       throw new Error('No valid workouts found in file.');
     }
-    return { workouts: valid.sort(sortWorkoutsDesc) };
+    return { exercises: valid.sort(sortExercisesRecentDesc) };
   }
 
-  if (parsed && typeof parsed === 'object' && 'workouts' in parsed) {
-    const obj = parsed as { workouts?: unknown; settings?: { unit?: unknown } };
-    if (!Array.isArray(obj.workouts)) {
-      throw new Error('Invalid backup format: workouts must be an array.');
+  if (parsed && typeof parsed === 'object' && 'exercises' in parsed) {
+    const obj = parsed as { exercises?: unknown; settings?: { unit?: unknown } };
+    if (!Array.isArray(obj.exercises)) {
+      throw new Error('Invalid backup format: exercises must be an array.');
     }
-    const valid = obj.workouts.filter(isValidWorkout);
-    if (valid.length === 0 && obj.workouts.length > 0) {
+    const valid = obj.exercises.filter(isValidExercise).map((ex) => ({
+      ...ex,
+      entries: [...ex.entries].sort(sortEntriesDesc),
+    }));
+    if (valid.length === 0 && obj.exercises.length > 0) {
       throw new Error('Backup file contained unrecognized workout entries.');
     }
     const unit: WeightUnit | undefined =
@@ -160,7 +136,7 @@ export function parseBackupJson(rawText: string): {
           ? 'lbs'
           : undefined;
     return {
-      workouts: valid.sort(sortWorkoutsDesc),
+      exercises: valid.sort(sortExercisesRecentDesc),
       settings: unit ? { unit } : undefined,
     };
   }
@@ -168,49 +144,46 @@ export function parseBackupJson(rawText: string): {
   throw new Error('Unrecognized JSON backup structure.');
 }
 
-export function sortWorkoutsDesc(a: Workout, b: Workout): number {
-  if (a.date !== b.date) return b.date.localeCompare(a.date);
-  return b.createdAt - a.createdAt;
-}
-
 function isValidEquipment(val: unknown): val is EquipmentType {
   return val === 'machine' || val === 'no-machine';
 }
 
-function isValidSet(val: unknown): val is SetEntry {
-  if (!val || typeof val !== 'object') return false;
-  const s = val as Record<string, unknown>;
-  return (
-    typeof s.id === 'string' &&
-    typeof s.weight === 'string' &&
-    typeof s.reps === 'string' &&
-    typeof s.completed === 'boolean'
-  );
+function isValidUnit(val: unknown): val is WeightUnit {
+  return val === 'lbs' || val === 'kg';
 }
 
-function isValidExercise(val: unknown): val is ExerciseEntry {
+function isValidStatEntry(val: unknown): val is StatEntry {
   if (!val || typeof val !== 'object') return false;
   const e = val as Record<string, unknown>;
+  const validWeight =
+    e.weight === null ||
+    (typeof e.weight === 'number' && Number.isFinite(e.weight) && e.weight >= 0);
   return (
     typeof e.id === 'string' &&
-    typeof e.name === 'string' &&
-    isValidEquipment(e.equipment) &&
-    Array.isArray(e.sets) &&
-    e.sets.every(isValidSet)
+    validWeight &&
+    isValidUnit(e.unit) &&
+    typeof e.reps === 'number' &&
+    Number.isFinite(e.reps) &&
+    e.reps > 0 &&
+    typeof e.date === 'string' &&
+    e.date.length > 0 &&
+    (e.note === undefined || typeof e.note === 'string') &&
+    typeof e.createdAt === 'number' &&
+    typeof e.updatedAt === 'number'
   );
 }
 
-function isValidWorkout(val: unknown): val is Workout {
+function isValidExercise(val: unknown): val is TrackedExercise {
   if (!val || typeof val !== 'object') return false;
-  const w = val as Record<string, unknown>;
+  const ex = val as Record<string, unknown>;
   return (
-    typeof w.id === 'string' &&
-    typeof w.title === 'string' &&
-    typeof w.date === 'string' &&
-    (w.unit === 'lbs' || w.unit === 'kg') &&
-    Array.isArray(w.exercises) &&
-    w.exercises.every(isValidExercise) &&
-    typeof w.createdAt === 'number' &&
-    typeof w.updatedAt === 'number'
+    typeof ex.id === 'string' &&
+    typeof ex.name === 'string' &&
+    ex.name.trim().length > 0 &&
+    isValidEquipment(ex.equipment) &&
+    Array.isArray(ex.entries) &&
+    ex.entries.every(isValidStatEntry) &&
+    typeof ex.createdAt === 'number' &&
+    typeof ex.updatedAt === 'number'
   );
 }

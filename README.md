@@ -1,6 +1,6 @@
 # Stat Tracker — Gym Edition
 
-A lightweight, mobile-first React SPA for logging gym workouts, tracking sets/reps/weight, tagging **Machine** vs. **No Machine** exercises, and visualizing strength progress over time.
+A lightweight, gym-independent React SPA for tracking your best **weight** and **# of reps** per workout/exercise. Update numbers whenever they go up or down—no live set-by-set logging required.
 
 ## Tech Stack
 - **React 19 + TypeScript + Vite 6**
@@ -8,9 +8,9 @@ A lightweight, mobile-first React SPA for logging gym workouts, tracking sets/re
 - **Browser `localStorage`** (offline-ready) with **JSON Export / Import**
 
 ## Features
-- **Log Workouts**: Add exercises with a **Machine / No Machine** toggle, autocomplete from previous exercises, add/complete individual sets with weight & reps, and see your previous session + PR right on each card. In-progress workouts auto-save as a draft.
-- **History**: Search workouts, filter by **All / Machine / No Machine**, inspect sets, edit past sessions, or delete entries.
-- **Stats & Backup**: Track lifetime totals, per-exercise **Best Weight (PR)**, **Estimated 1RM**, **Session Volume**, and a lightweight progression chart. Toggle between **`lbs`** and **`kg`** anytime, and export/import JSON backups.
+- **Workout Roster**: Track each exercise with its current best weight (or **Bodyweight** for reps-only movements), best reps, **Machine / No Machine** tag, last updated date, and an automatic **Up / Down / Mixed** delta badge.
+- **Per-Workout History**: Every update is saved with its date and optional note, building a dedicated chronological history and progression chart (Weight or Reps) for each workout—recording both gains and dips.
+- **Overview & Backup**: See total tracked workouts, trending up/down counts, a recent activity feed, instant **`lbs` / `kg`** conversion, and JSON backup Export / Import.
 
 ## Run Locally
 ```bash

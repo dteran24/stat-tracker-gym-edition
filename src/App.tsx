@@ -1,23 +1,27 @@
-import { useEffect, useState } from 'react';
-import type { ActiveTab, AppSettings, WeightUnit, Workout, WorkoutDraft } from './types';
+import { useEffect, useMemo, useState } from 'react';
+import type {
+  ActiveTab,
+  AppSettings,
+  EquipmentType,
+  StatEntry,
+  TrackedExercise,
+  WeightUnit,
+} from './types';
 import { BottomNav } from './components/BottomNav';
-import { HistoryView } from './components/HistoryView';
+import { EntryModal, type ModalMode } from './components/EntryModal';
+import { ExerciseDetailView } from './components/ExerciseDetailView';
+import { ExerciseListView } from './components/ExerciseListView';
 import { DumbbellIcon } from './components/Icons';
-import { LogWorkoutView } from './components/LogWorkoutView';
 import { StatsView } from './components/StatsView';
-import { convertWeight, formatNumber, parseNumeric } from './utils/stats';
 import {
-  clearDraft,
-  createEmptyDraft,
   createId,
-  loadDraft,
+  loadExercises,
   loadSettings,
-  loadWorkouts,
   parseBackupJson,
-  saveDraft,
+  saveExercises,
   saveSettings,
-  saveWorkouts,
-  sortWorkoutsDesc,
+  sortEntriesDesc,
+  sortExercisesRecentDesc,
 } from './utils/storage';
 
 interface ToastState {
@@ -26,23 +30,20 @@ interface ToastState {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('log');
-  const [workouts, setWorkouts] = useState<Workout[]>(() => loadWorkouts());
+  const [activeTab, setActiveTab] = useState<ActiveTab>('exercises');
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
+  const [exercises, setExercises] = useState<TrackedExercise[]>(() => loadExercises());
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
-  const [draft, setDraft] = useState<WorkoutDraft>(() => loadDraft());
+  const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
-    saveWorkouts(workouts);
-  }, [workouts]);
+    saveExercises(exercises);
+  }, [exercises]);
 
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
-
-  useEffect(() => {
-    saveDraft(draft);
-  }, [draft]);
 
   useEffect(() => {
     if (!toast) return;
@@ -54,117 +55,168 @@ export default function App() {
     setToast({ message, tone });
   };
 
+  const selectedExercise = useMemo(
+    () =>
+      selectedExerciseId
+        ? exercises.find((ex) => ex.id === selectedExerciseId) ?? null
+        : null,
+    [exercises, selectedExerciseId]
+  );
+
   const handleUnitChange = (nextUnit: WeightUnit) => {
     if (nextUnit === settings.unit) return;
-    const prevUnit = settings.unit;
     setSettings({ unit: nextUnit });
-
-    // Keep any in-progress draft weights consistent with the newly selected unit
-    if (draft.exercises.length > 0) {
-      setDraft((prev) => ({
-        ...prev,
-        exercises: prev.exercises.map((ex) => ({
-          ...ex,
-          sets: ex.sets.map((s) => {
-            if (s.weight.trim() === '') return s;
-            const converted = convertWeight(parseNumeric(s.weight), prevUnit, nextUnit);
-            return { ...s, weight: formatNumber(converted) };
-          }),
-        })),
-      }));
-    }
   };
 
-  const handleSaveWorkout = () => {
-    const cleanedExercises = draft.exercises
-      .map((ex) => ({
-        ...ex,
-        name: ex.name.trim(),
-        sets: ex.sets.filter((s) => s.weight.trim() !== '' || s.reps.trim() !== ''),
-      }))
-      .filter((ex) => ex.name.length > 0 && ex.sets.length > 0);
-
-    if (cleanedExercises.length === 0) {
-      showToast('Add at least one exercise with weight or reps before saving.', 'error');
-      return;
-    }
-
+  const handleCreateExercise = (payload: {
+    name: string;
+    equipment: EquipmentType;
+    weight: number | null;
+    reps: number;
+    date: string;
+    note: string;
+  }) => {
     const now = Date.now();
-    const defaultTitle =
-      cleanedExercises.length === 1
-        ? cleanedExercises[0].name
-        : `${cleanedExercises[0].name} + ${cleanedExercises.length - 1} more`;
+    const initialEntry: StatEntry = {
+      id: createId(),
+      weight: payload.weight,
+      unit: settings.unit,
+      reps: payload.reps,
+      date: payload.date,
+      note: payload.note || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    if (draft.editingId) {
-      setWorkouts((prev) =>
-        prev
-          .map((w) =>
-            w.id === draft.editingId
-              ? {
-                  ...w,
-                  title: draft.title.trim() || defaultTitle,
-                  date: draft.date,
-                  unit: settings.unit,
-                  exercises: cleanedExercises,
-                  updatedAt: now,
-                }
-              : w
-          )
-          .sort(sortWorkoutsDesc)
-      );
-      showToast('Workout updated!');
-    } else {
-      const newWorkout: Workout = {
-        id: createId(),
-        title: draft.title.trim() || defaultTitle,
-        date: draft.date,
-        unit: settings.unit,
-        exercises: cleanedExercises,
-        createdAt: now,
-        updatedAt: now,
-      };
-      setWorkouts((prev) => [newWorkout, ...prev].sort(sortWorkoutsDesc));
-      showToast('Workout saved!');
-    }
+    const newExercise: TrackedExercise = {
+      id: createId(),
+      name: payload.name,
+      equipment: payload.equipment,
+      entries: [initialEntry],
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    clearDraft();
-    setDraft(createEmptyDraft());
-    setActiveTab('history');
+    setExercises((prev) => [newExercise, ...prev].sort(sortExercisesRecentDesc));
+    setModalMode(null);
+    showToast(`Added "${payload.name}"!`);
   };
 
-  const handleDiscardDraft = () => {
-    clearDraft();
-    setDraft(createEmptyDraft());
-    showToast(draft.editingId ? 'Edit cancelled.' : 'Draft cleared.');
+  const handleLogUpdate = (
+    exerciseId: string,
+    payload: { weight: number | null; reps: number; date: string; note: string }
+  ) => {
+    const now = Date.now();
+    const newEntry: StatEntry = {
+      id: createId(),
+      weight: payload.weight,
+      unit: settings.unit,
+      reps: payload.reps,
+      date: payload.date,
+      note: payload.note || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setExercises((prev) =>
+      prev
+        .map((ex) =>
+          ex.id === exerciseId
+            ? {
+                ...ex,
+                entries: [newEntry, ...ex.entries].sort(sortEntriesDesc),
+                updatedAt: now,
+              }
+            : ex
+        )
+        .sort(sortExercisesRecentDesc)
+    );
+
+    setModalMode(null);
+    showToast('Update recorded!');
   };
 
-  const handleEditWorkout = (workout: Workout) => {
-    const convertedExercises = workout.exercises.map((ex) => ({
-      ...ex,
-      sets: ex.sets.map((s) => ({
-        ...s,
-        weight:
-          s.weight.trim() === ''
-            ? ''
-            : formatNumber(convertWeight(parseNumeric(s.weight), workout.unit, settings.unit)),
-      })),
-    }));
+  const handleEditEntry = (
+    exerciseId: string,
+    entryId: string,
+    payload: { weight: number | null; reps: number; date: string; note: string }
+  ) => {
+    const now = Date.now();
+    setExercises((prev) =>
+      prev
+        .map((ex) =>
+          ex.id === exerciseId
+            ? {
+                ...ex,
+                entries: ex.entries
+                  .map((entry) =>
+                    entry.id === entryId
+                      ? {
+                          ...entry,
+                          weight: payload.weight,
+                          unit: settings.unit,
+                          reps: payload.reps,
+                          date: payload.date,
+                          note: payload.note || undefined,
+                          updatedAt: now,
+                        }
+                      : entry
+                  )
+                  .sort(sortEntriesDesc),
+                updatedAt: now,
+              }
+            : ex
+        )
+        .sort(sortExercisesRecentDesc)
+    );
 
-    setDraft({
-      editingId: workout.id,
-      title: workout.title,
-      date: workout.date,
-      exercises: convertedExercises,
-    });
-    setActiveTab('log');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setModalMode(null);
+    showToast('Entry updated!');
   };
 
-  const handleDeleteWorkout = (workoutId: string) => {
-    setWorkouts((prev) => prev.filter((w) => w.id !== workoutId));
-    if (draft.editingId === workoutId) {
-      clearDraft();
-      setDraft(createEmptyDraft());
+  const handleDeleteEntry = (exerciseId: string, entryId: string) => {
+    const now = Date.now();
+    setExercises((prev) =>
+      prev
+        .map((ex) =>
+          ex.id === exerciseId
+            ? {
+                ...ex,
+                entries: ex.entries.filter((e) => e.id !== entryId),
+                updatedAt: now,
+              }
+            : ex
+        )
+        .sort(sortExercisesRecentDesc)
+    );
+    showToast('Entry deleted.');
+  };
+
+  const handleEditExercise = (
+    exerciseId: string,
+    payload: { name: string; equipment: EquipmentType }
+  ) => {
+    const now = Date.now();
+    setExercises((prev) =>
+      prev.map((ex) =>
+        ex.id === exerciseId
+          ? {
+              ...ex,
+              name: payload.name,
+              equipment: payload.equipment,
+              updatedAt: now,
+            }
+          : ex
+      )
+    );
+    setModalMode(null);
+    showToast('Workout details updated.');
+  };
+
+  const handleDeleteExercise = (exerciseId: string) => {
+    setExercises((prev) => prev.filter((ex) => ex.id !== exerciseId));
+    if (selectedExerciseId === exerciseId) {
+      setSelectedExerciseId(null);
     }
     showToast('Workout deleted.');
   };
@@ -172,20 +224,34 @@ export default function App() {
   const handleImportJson = (jsonText: string) => {
     try {
       const imported = parseBackupJson(jsonText);
-      setWorkouts((prev) => {
-        const byId = new Map<string, Workout>();
-        for (const w of prev) byId.set(w.id, w);
-        for (const w of imported.workouts) byId.set(w.id, w);
-        return Array.from(byId.values()).sort(sortWorkoutsDesc);
+      setExercises((prev) => {
+        const byId = new Map<string, TrackedExercise>();
+        for (const ex of prev) byId.set(ex.id, ex);
+        for (const ex of imported.exercises) byId.set(ex.id, ex);
+        return Array.from(byId.values()).sort(sortExercisesRecentDesc);
       });
       if (imported.settings) {
         setSettings(imported.settings);
       }
-      showToast(`Imported ${imported.workouts.length} workout(s)!`);
+      showToast(`Imported ${imported.exercises.length} workout(s)!`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to import JSON file.';
       showToast(msg, 'error');
     }
+  };
+
+  const handleOpenExercise = (exerciseId: string) => {
+    setSelectedExerciseId(exerciseId);
+    setActiveTab('exercises');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleTabChange = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    if (tab === 'exercises') {
+      setSelectedExerciseId(null);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -193,7 +259,11 @@ export default function App() {
       {/* Top Bar */}
       <header className="sticky top-0 z-30 bg-[#0A0C10]/90 backdrop-blur-md border-b border-white/[0.08]">
         <div className="mx-auto max-w-lg px-4 h-14 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <button
+            type="button"
+            onClick={() => handleTabChange('exercises')}
+            className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
+          >
             <div className="w-8 h-8 rounded-xl bg-[#F97316]/15 border border-[#F97316]/30 flex items-center justify-center text-[#F97316] shrink-0">
               <DumbbellIcon className="w-4 h-4" />
             </div>
@@ -205,7 +275,7 @@ export default function App() {
                 Gym Edition
               </p>
             </div>
-          </div>
+          </button>
 
           {/* Quick lbs / kg Toggle */}
           <div
@@ -234,35 +304,48 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 mx-auto w-full max-w-lg px-4 pt-4">
-        {activeTab === 'log' && (
-          <LogWorkoutView
-            draft={draft}
+        {activeTab === 'exercises' && selectedExercise ? (
+          <ExerciseDetailView
+            exercise={selectedExercise}
             unit={settings.unit}
-            workouts={workouts}
-            onUpdateDraft={setDraft}
-            onSaveWorkout={handleSaveWorkout}
-            onDiscardDraft={handleDiscardDraft}
+            onBack={() => setSelectedExerciseId(null)}
+            onLogUpdate={(ex) => setModalMode({ type: 'log-update', exercise: ex })}
+            onEditExercise={(ex) => setModalMode({ type: 'edit-exercise', exercise: ex })}
+            onDeleteExercise={handleDeleteExercise}
+            onEditEntry={(ex, entry) =>
+              setModalMode({ type: 'edit-entry', exercise: ex, entry })
+            }
+            onDeleteEntry={handleDeleteEntry}
           />
-        )}
-
-        {activeTab === 'history' && (
-          <HistoryView
-            workouts={workouts}
+        ) : activeTab === 'exercises' ? (
+          <ExerciseListView
+            exercises={exercises}
             unit={settings.unit}
-            onEditWorkout={handleEditWorkout}
-            onDeleteWorkout={handleDeleteWorkout}
+            onAddExercise={() => setModalMode({ type: 'create-exercise' })}
+            onLogUpdate={(ex) => setModalMode({ type: 'log-update', exercise: ex })}
+            onOpenDetail={handleOpenExercise}
           />
-        )}
-
-        {activeTab === 'stats' && (
+        ) : (
           <StatsView
-            workouts={workouts}
+            exercises={exercises}
             settings={settings}
             onChangeUnit={handleUnitChange}
             onImportJson={handleImportJson}
+            onOpenExercise={handleOpenExercise}
           />
         )}
       </main>
+
+      {/* Create / Update / Edit Modal */}
+      <EntryModal
+        mode={modalMode}
+        unit={settings.unit}
+        onClose={() => setModalMode(null)}
+        onSubmitCreate={handleCreateExercise}
+        onSubmitLogUpdate={handleLogUpdate}
+        onSubmitEditEntry={handleEditEntry}
+        onSubmitEditExercise={handleEditExercise}
+      />
 
       {/* Toast Notification */}
       {toast && (
@@ -286,9 +369,8 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <BottomNav
         activeTab={activeTab}
-        onChange={setActiveTab}
-        draftExerciseCount={draft.exercises.length}
-        workoutCount={workouts.length}
+        onChange={handleTabChange}
+        exerciseCount={exercises.length}
       />
     </div>
   );

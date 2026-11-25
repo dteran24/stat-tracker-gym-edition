@@ -1,133 +1,87 @@
-import { useMemo, useRef, useState } from 'react';
-import type { ChangeEvent } from 'react';
-import type {
-  AppSettings,
-  EquipmentFilter,
-  WeightUnit,
-  Workout,
-} from '../types';
+import { useMemo, useRef } from 'react';
+import type { AppSettings, TrackedExercise, WeightUnit } from '../types';
 import {
-  formatNumber,
-  formatShortDate,
-  formatVolume,
-  getExerciseProgressSeries,
-  getTrackedExercises,
-  getWorkoutStats,
-  normalizeExerciseKey,
+  compareEntries,
+  formatFullDate,
+  formatWeightLabel,
+  getEntryWeightInUnit,
 } from '../utils/stats';
-import { exportBackupJson } from '../utils/storage';
-import {
-  ChartIcon,
-  DownloadIcon,
-  TrophyIcon,
-  UploadIcon,
-} from './Icons';
-import { MiniLineChart } from './MiniLineChart';
-
-type ChartMetric = 'maxWeight' | 'bestEst1RM' | 'totalVolume';
+import { exportBackupJson, getTodayIso } from '../utils/storage';
+import { DeltaBadge } from './DeltaBadge';
+import { DownloadIcon, TrendDownIcon, TrendUpIcon, UploadIcon } from './Icons';
 
 interface StatsViewProps {
-  workouts: Workout[];
+  exercises: TrackedExercise[];
   settings: AppSettings;
   onChangeUnit: (unit: WeightUnit) => void;
   onImportJson: (jsonText: string) => void;
+  onOpenExercise: (exerciseId: string) => void;
 }
 
 export function StatsView({
-  workouts,
+  exercises,
   settings,
   onChangeUnit,
   onImportJson,
+  onOpenExercise,
 }: StatsViewProps) {
-  const [equipFilter, setEquipFilter] = useState<EquipmentFilter>('all');
-  const [selectedKey, setSelectedKey] = useState<string>('');
-  const [metric, setMetric] = useState<ChartMetric>('maxWeight');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const unit = settings.unit;
 
-  const overallStats = useMemo(() => {
-    let totalSets = 0;
-    let totalVolume = 0;
-    for (const w of workouts) {
-      const s = getWorkoutStats(w, unit);
-      totalSets += s.totalSets;
-      totalVolume += s.totalVolume;
-    }
-    return {
-      totalWorkouts: workouts.length,
-      totalSets,
-      totalVolume,
-    };
-  }, [workouts, unit]);
+  const summary = useMemo(() => {
+    let totalEntries = 0;
+    let trendingUp = 0;
+    let trendingDown = 0;
 
-  const trackedExercises = useMemo(
-    () => getTrackedExercises(workouts, equipFilter),
-    [workouts, equipFilter]
-  );
-
-  const activeExercise = useMemo(() => {
-    if (trackedExercises.length === 0) return null;
-    const found = trackedExercises.find(
-      (ex) => normalizeExerciseKey(ex.name, ex.equipment) === selectedKey
-    );
-    return found ?? trackedExercises[0];
-  }, [trackedExercises, selectedKey]);
-
-  const series = useMemo(() => {
-    if (!activeExercise) return [];
-    return getExerciseProgressSeries(
-      workouts,
-      activeExercise.name,
-      activeExercise.equipment,
-      unit
-    );
-  }, [workouts, activeExercise, unit]);
-
-  const prSummary = useMemo(() => {
-    if (series.length === 0) {
-      return { bestWeight: 0, bestWeightReps: 0, best1RM: 0, bestVolume: 0 };
-    }
-    let bestWeight = 0;
-    let bestWeightReps = 0;
-    let best1RM = 0;
-    let bestVolume = 0;
-    for (const pt of series) {
-      if (
-        pt.maxWeight > bestWeight ||
-        (pt.maxWeight === bestWeight && pt.bestSetReps > bestWeightReps)
-      ) {
-        bestWeight = pt.maxWeight;
-        bestWeightReps = pt.bestSetReps;
+    for (const ex of exercises) {
+      totalEntries += ex.entries.length;
+      if (ex.entries.length >= 2) {
+        const cmp = compareEntries(ex.entries[0], ex.entries[1], unit);
+        if (cmp.direction === 'up') trendingUp += 1;
+        else if (cmp.direction === 'down') trendingDown += 1;
       }
-      if (pt.bestEst1RM > best1RM) best1RM = pt.bestEst1RM;
-      if (pt.totalVolume > bestVolume) bestVolume = pt.totalVolume;
     }
-    return { bestWeight, bestWeightReps, best1RM, bestVolume };
-  }, [series]);
 
-  const chartData = useMemo(
-    () =>
-      series.map((pt) => ({
-        date: pt.date,
-        value: pt[metric],
-        detail: `${formatNumber(pt.bestSetWeight)} ${unit} × ${pt.bestSetReps}`,
-      })),
-    [series, metric, unit]
-  );
+    return {
+      totalExercises: exercises.length,
+      totalEntries,
+      trendingUp,
+      trendingDown,
+    };
+  }, [exercises, unit]);
+
+  const recentChanges = useMemo(() => {
+    const items = exercises.flatMap((ex) =>
+      ex.entries.map((entry, idx) => ({
+        exerciseId: ex.id,
+        exerciseName: ex.name,
+        entry,
+        comparison: compareEntries(entry, ex.entries[idx + 1], unit),
+      }))
+    );
+
+    return items
+      .sort((a, b) => {
+        if (a.entry.date !== b.entry.date) {
+          return b.entry.date.localeCompare(a.entry.date);
+        }
+        return b.entry.createdAt - a.entry.createdAt;
+      })
+      .slice(0, 12);
+  }, [exercises, unit]);
 
   const handleExport = () => {
-    const json = exportBackupJson(workouts, settings);
+    const json = exportBackupJson(exercises, settings);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `gym-stat-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `stat-tracker-backup-${getTodayIso()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -141,217 +95,120 @@ export function StatsView({
   };
 
   return (
-    <div className="space-y-4 pb-28">
-      {/* Lifetime Summary Strip */}
-      <section className="grid grid-cols-3 gap-2.5">
-        <div className="card-surface rounded-2xl p-3.5 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8E98A8]">
-            Workouts
-          </p>
-          <p className="mt-1 text-xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
-            {overallStats.totalWorkouts}
-          </p>
-        </div>
-        <div className="card-surface rounded-2xl p-3.5 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8E98A8]">
-            Total Sets
-          </p>
-          <p className="mt-1 text-xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
-            {overallStats.totalSets}
-          </p>
-        </div>
-        <div className="card-surface rounded-2xl p-3.5 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8E98A8]">
-            Volume ({unit})
-          </p>
-          <p className="mt-1 text-xl font-extrabold font-mono tabular-nums text-[#F97316]">
-            {formatVolume(overallStats.totalVolume)}
-          </p>
-        </div>
-      </section>
+    <div className="space-y-5 pb-28 animate-enter">
+      <div>
+        <h2 className="text-lg font-extrabold tracking-tight text-[#F3F5F8]">
+          Overview &amp; Backup
+        </h2>
+        <p className="text-xs text-[#8E98A8]">
+          Track your progress across all workouts and keep your data backed up.
+        </p>
+      </div>
 
-      {/* Exercise Progress Explorer */}
-      <section className="card-surface rounded-2xl p-4 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-[#8E98A8]">
-            Exercise Progress
-          </h2>
-          <div className="inline-flex rounded-lg bg-[#0B0E14] p-0.5 border border-white/[0.06]">
-            {(
-              [
-                { id: 'all', label: 'All' },
-                { id: 'machine', label: 'Machine' },
-                { id: 'no-machine', label: 'No Machine' },
-              ] as const
-            ).map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setEquipFilter(opt.id)}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
-                  equipFilter === opt.id
-                    ? 'bg-[#212836] text-[#F3F5F8]'
-                    : 'text-[#8E98A8] hover:text-[#F3F5F8]'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+      {/* Overview Tiles */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="card-surface rounded-2xl p-3.5">
+          <span className="text-[11px] font-semibold text-[#8E98A8]">
+            Workouts Tracked
+          </span>
+          <p className="mt-1 text-2xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
+            {summary.totalExercises}
+          </p>
         </div>
 
-        {trackedExercises.length === 0 ? (
-          <div className="py-8 text-center space-y-2">
-            <div className="mx-auto w-10 h-10 rounded-xl bg-[#1A202B] flex items-center justify-center text-[#8E98A8]">
-              <ChartIcon className="w-5 h-5" />
-            </div>
-            <p className="text-sm font-semibold text-[#F3F5F8]">
-              No exercise stats yet
-            </p>
-            <p className="text-xs text-[#8E98A8]">
-              Complete and save workouts to see your PRs and progression chart.
-            </p>
+        <div className="card-surface rounded-2xl p-3.5">
+          <span className="text-[11px] font-semibold text-[#8E98A8]">
+            Total Updates
+          </span>
+          <p className="mt-1 text-2xl font-extrabold font-mono tabular-nums text-[#F3F5F8]">
+            {summary.totalEntries}
+          </p>
+        </div>
+
+        <div className="card-surface rounded-2xl p-3.5">
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#86EFAC]">
+            <TrendUpIcon className="w-3.5 h-3.5" />
+            Trending Up
+          </span>
+          <p className="mt-1 text-2xl font-extrabold font-mono tabular-nums text-[#86EFAC]">
+            {summary.trendingUp}
+          </p>
+        </div>
+
+        <div className="card-surface rounded-2xl p-3.5">
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-300">
+            <TrendDownIcon className="w-3.5 h-3.5" />
+            Trending Down
+          </span>
+          <p className="mt-1 text-2xl font-extrabold font-mono tabular-nums text-rose-300">
+            {summary.trendingDown}
+          </p>
+        </div>
+      </div>
+
+      {/* Recent Changes Feed */}
+      <section className="space-y-2.5">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[#8E98A8]">
+          Recent Activity
+        </h3>
+
+        {recentChanges.length === 0 ? (
+          <div className="card-surface rounded-2xl p-6 text-center text-xs text-[#8E98A8]">
+            Your recent updates across all workouts will appear here.
           </div>
         ) : (
-          <>
-            {/* Exercise Picker */}
-            <select
-              id="stats-exercise-select"
-              aria-label="Select exercise to analyze"
-              value={
-                activeExercise
-                  ? normalizeExerciseKey(activeExercise.name, activeExercise.equipment)
-                  : ''
-              }
-              onChange={(e) => setSelectedKey(e.target.value)}
-              className="input-field w-full h-11 rounded-xl px-3.5 text-sm font-semibold"
-            >
-              {trackedExercises.map((ex) => {
-                const key = normalizeExerciseKey(ex.name, ex.equipment);
-                const tag = ex.equipment === 'machine' ? 'Machine' : 'No Machine';
-                return (
-                  <option key={key} value={key} className="bg-[#12161E]">
-                    {ex.name} ({tag}) — {ex.usageCount}x
-                  </option>
-                );
-              })}
-            </select>
-
-            {/* PR Cards */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl bg-[#0C0F15] border border-white/[0.06] p-3">
-                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[#4ADE80]">
-                  <TrophyIcon className="w-3 h-3" />
-                  Best PR
-                </div>
-                <p className="mt-1 text-base font-bold font-mono tabular-nums text-[#F3F5F8]">
-                  {formatNumber(prSummary.bestWeight)}{' '}
-                  <span className="text-xs font-normal text-[#8E98A8]">{unit}</span>
-                </p>
-                <p className="text-[11px] font-mono text-[#8E98A8]">
-                  × {prSummary.bestWeightReps} reps
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-[#0C0F15] border border-white/[0.06] p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#8E98A8]">
-                  Est. 1RM
-                </p>
-                <p className="mt-1 text-base font-bold font-mono tabular-nums text-[#F3F5F8]">
-                  {formatNumber(prSummary.best1RM)}{' '}
-                  <span className="text-xs font-normal text-[#8E98A8]">{unit}</span>
-                </p>
-                <p className="text-[11px] text-[#5C6677]">Epley peak</p>
-              </div>
-
-              <div className="rounded-xl bg-[#0C0F15] border border-white/[0.06] p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#8E98A8]">
-                  Best Vol
-                </p>
-                <p className="mt-1 text-base font-bold font-mono tabular-nums text-[#F3F5F8]">
-                  {formatVolume(prSummary.bestVolume)}
-                </p>
-                <p className="text-[11px] text-[#5C6677]">{unit} / session</p>
-              </div>
-            </div>
-
-            {/* Metric Selector */}
-            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#0B0E14] border border-white/[0.06]">
-              {(
-                [
-                  { id: 'maxWeight', label: 'Max Weight' },
-                  { id: 'bestEst1RM', label: 'Est. 1RM' },
-                  { id: 'totalVolume', label: 'Volume' },
-                ] as const
-              ).map((m) => (
+          <div className="space-y-2">
+            {recentChanges.map(({ exerciseId, exerciseName, entry, comparison }) => {
+              const weightInUnit = getEntryWeightInUnit(entry, unit);
+              return (
                 <button
-                  key={m.id}
+                  key={entry.id}
                   type="button"
-                  onClick={() => setMetric(m.id)}
-                  className={`h-8 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                    metric === m.id
-                      ? 'bg-[#F97316] text-[#0A0C10]'
-                      : 'text-[#8E98A8] hover:text-[#F3F5F8]'
-                  }`}
+                  onClick={() => onOpenExercise(exerciseId)}
+                  className="w-full text-left card-surface rounded-2xl p-3.5 hover:border-white/15 transition-colors cursor-pointer"
                 >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Progression Chart */}
-            <MiniLineChart data={chartData} unitLabel={unit} />
-
-            {/* Recent Session Rows */}
-            <div className="space-y-1.5 pt-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5C6677]">
-                Recent Sessions
-              </p>
-              {[...series]
-                .reverse()
-                .slice(0, 5)
-                .map((pt) => (
-                  <div
-                    key={pt.workoutId}
-                    className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#0C0F15] border border-white/[0.05] text-xs"
-                  >
-                    <span className="font-mono text-[#8E98A8]">
-                      {formatShortDate(pt.date)}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-[#F3F5F8] truncate">
+                      {exerciseName}
                     </span>
-                    <span className="font-mono font-semibold tabular-nums text-[#F3F5F8]">
-                      {formatNumber(pt.bestSetWeight)} {unit} × {pt.bestSetReps}
-                    </span>
-                    <span className="font-mono tabular-nums text-[#8E98A8]">
-                      {formatVolume(pt.totalVolume)} vol
+                    <span className="text-[11px] text-[#8E98A8] shrink-0">
+                      {formatFullDate(entry.date)}
                     </span>
                   </div>
-                ))}
-            </div>
-          </>
+                  <div className="mt-1.5 flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-mono font-bold tabular-nums text-[#C5CDD9]">
+                      {formatWeightLabel(weightInUnit, unit)} ×{' '}
+                      <span className="text-[#F97316]">{entry.reps} reps</span>
+                    </span>
+                    <DeltaBadge comparison={comparison} unit={unit} compact />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )}
       </section>
 
-      {/* Preferences & JSON Backup */}
+      {/* Preferences & Data Backup */}
       <section className="card-surface rounded-2xl p-4 space-y-4">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-[#8E98A8]">
-          Preferences & Data Backup
-        </h2>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[#8E98A8]">
+          Settings &amp; Backup
+        </h3>
 
-        {/* Weight Unit Toggle */}
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-[#F3F5F8]">Weight Unit</p>
-            <p className="text-xs text-[#8E98A8]">
-              Converts displayed weights automatically
+            <p className="text-sm font-semibold text-[#F3F5F8]">Display Unit</p>
+            <p className="text-[11px] text-[#8E98A8]">
+              Weights convert automatically without losing accuracy.
             </p>
           </div>
-          <div className="inline-flex rounded-xl bg-[#0B0E14] p-1 border border-white/[0.06]">
+          <div className="inline-flex rounded-xl bg-[#0D1016] p-0.5 border border-white/10 shrink-0">
             {(['lbs', 'kg'] as const).map((u) => (
               <button
                 key={u}
                 type="button"
                 onClick={() => onChangeUnit(u)}
-                className={`h-9 w-14 rounded-lg text-xs font-bold uppercase transition-colors cursor-pointer ${
+                className={`h-8 px-3 rounded-lg text-xs font-bold uppercase transition-colors cursor-pointer ${
                   unit === u
                     ? 'bg-[#F97316] text-[#0A0C10]'
                     : 'text-[#8E98A8] hover:text-[#F3F5F8]'
@@ -363,35 +220,31 @@ export function StatsView({
           </div>
         </div>
 
-        <div className="h-px bg-white/[0.06]" />
-
-        {/* Export / Import */}
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="pt-3 border-t border-white/[0.08] grid grid-cols-2 gap-2.5">
           <button
-            id="export-json-btn"
             type="button"
             onClick={handleExport}
-            className="h-11 rounded-xl bg-[#1A202B] hover:bg-[#232B3A] border border-white/10 text-xs font-semibold text-[#F3F5F8] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="h-10 px-3 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-[#F3F5F8] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <DownloadIcon className="w-4 h-4 text-[#F97316]" />
             Export JSON
           </button>
 
           <button
-            id="import-json-btn"
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="h-11 rounded-xl bg-[#1A202B] hover:bg-[#232B3A] border border-white/10 text-xs font-semibold text-[#F3F5F8] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="h-10 px-3 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-[#F3F5F8] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
-            <UploadIcon className="w-4 h-4 text-[#38BDF8]" />
+            <UploadIcon className="w-4 h-4 text-[#22C55E]" />
             Import JSON
           </button>
+
           <input
             ref={fileInputRef}
             type="file"
             accept="application/json,.json"
-            className="hidden"
             onChange={handleFileChange}
+            className="hidden"
           />
         </div>
       </section>
