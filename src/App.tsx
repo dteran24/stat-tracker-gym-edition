@@ -116,7 +116,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get('authError');
     if (authError) {
-      showToast('Google Sign-In did not complete. Please try again.', 'error');
+      showToast(`Google Sign-In failed (${authError}). Please try again.`, 'error');
       params.delete('authError');
       const nextQuery = params.toString();
       const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`;
