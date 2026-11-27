@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActiveTab,
   AppSettings,
@@ -8,17 +8,17 @@ import type {
   WeightMode,
   WeightUnit,
 } from './types';
+import { AccountMenu } from './components/AccountMenu';
 import { BottomNav } from './components/BottomNav';
 import { EntryModal, type ModalMode } from './components/EntryModal';
 import { ExerciseDetailView } from './components/ExerciseDetailView';
 import { ExerciseListView } from './components/ExerciseListView';
-import { CloudUploadIcon, DumbbellIcon } from './components/Icons';
+import { DumbbellIcon } from './components/Icons';
 import { StatsView } from './components/StatsView';
 import {
   ApiError,
   fetchAuthStatus,
   fetchCloudState,
-  getGoogleSignInUrl,
   logoutSession,
   syncAddEntry,
   syncCreateExercise,
@@ -88,13 +88,17 @@ export default function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const [pendingLocalExercises, setPendingLocalExercises] = useState<TrackedExercise[]>([]);
+
+  const exercisesRef = useRef(exercises);
+  const settingsRef = useRef(settings);
 
   useEffect(() => {
+    exercisesRef.current = exercises;
     saveExercises(exercises);
   }, [exercises]);
 
   useEffect(() => {
+    settingsRef.current = settings;
     saveSettings(settings);
   }, [settings]);
 
@@ -124,7 +128,7 @@ export default function App() {
     }
   }, [showToast]);
 
-  // Initial auth check + hydrate from Railway SQLite
+  // Initial auth check + hydrate & auto-merge any local-only workouts into SQLite
   useEffect(() => {
     let cancelled = false;
 
@@ -140,23 +144,30 @@ export default function App() {
         }
 
         const localSnapshot = loadExercises();
+        const localSettings = loadSettings();
         const cloud = await fetchCloudState();
         if (cancelled) return;
 
         const cloudIds = new Set(cloud.exercises.map((ex) => ex.id));
         const localOnly = localSnapshot.filter((ex) => !cloudIds.has(ex.id));
 
-        if (cloud.exercises.length === 0 && localSnapshot.length > 0) {
-          // Keep existing local workouts visible and offer one-click upload to SQLite
-          setPendingLocalExercises(localSnapshot);
+        if (localOnly.length > 0) {
+          setSyncStatus('syncing');
+          const merged = await syncImportState(
+            localOnly,
+            cloud.exercises.length === 0 ? localSettings : undefined
+          );
+          if (cancelled) return;
+          setExercises(merged.exercises);
+          setSettings(merged.settings);
+          setLastSyncedAt(merged.syncedAt);
+          setSyncStatus('synced');
         } else {
           setExercises(cloud.exercises);
           setSettings(cloud.settings);
-          setPendingLocalExercises(localOnly);
+          setLastSyncedAt(cloud.syncedAt);
+          setSyncStatus('synced');
         }
-
-        setLastSyncedAt(cloud.syncedAt);
-        setSyncStatus('synced');
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
@@ -173,7 +184,32 @@ export default function App() {
     };
   }, []);
 
-  const runCloudSync = useCallback(
+  // Automatically flush any offline edits to SQLite when reconnecting
+  useEffect(() => {
+    if (!authStatus?.authenticated) return;
+    if (syncStatus !== 'offline' && syncStatus !== 'error') return;
+
+    const handleOnline = async () => {
+      setSyncStatus('syncing');
+      try {
+        const synced = await syncImportState(
+          exercisesRef.current,
+          settingsRef.current
+        );
+        setExercises(synced.exercises);
+        setSettings(synced.settings);
+        setLastSyncedAt(synced.syncedAt);
+        setSyncStatus('synced');
+      } catch {
+        setSyncStatus('offline');
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [authStatus?.authenticated, syncStatus]);
+
+  const runCloudSave = useCallback(
     async (task: () => Promise<{ syncedAt: string }>) => {
       if (!authStatus?.authenticated) return;
       setSyncStatus('syncing');
@@ -187,7 +223,7 @@ export default function App() {
             prev ? { ...prev, authenticated: false, user: null } : prev
           );
           setSyncStatus('signed-out');
-          showToast('Session expired. Sign in with Google to resume cloud sync.', 'error');
+          showToast('Session expired. Sign in with Google to resume cloud saves.', 'error');
         } else {
           setSyncStatus('offline');
         }
@@ -208,7 +244,7 @@ export default function App() {
     if (nextUnit === settings.unit) return;
     const nextSettings: AppSettings = { unit: nextUnit };
     setSettings(nextSettings);
-    void runCloudSync(() => syncSettings(nextSettings));
+    void runCloudSave(() => syncSettings(nextSettings));
   };
 
   const handleCreateExercise = (payload: {
@@ -250,7 +286,7 @@ export default function App() {
     setExercises((prev) => [newExercise, ...prev].sort(sortExercisesRecentDesc));
     setModalMode(null);
     showToast(`Added "${payload.name}"!`);
-    void runCloudSync(() => syncCreateExercise(newExercise));
+    void runCloudSave(() => syncCreateExercise(newExercise));
   };
 
   const handleLogUpdate = (
@@ -299,7 +335,7 @@ export default function App() {
 
     setModalMode(null);
     showToast('Update recorded!');
-    void runCloudSync(() =>
+    void runCloudSave(() =>
       syncAddEntry(exerciseId, {
         entry: newEntry,
         weightMode: payload.weightMode,
@@ -355,7 +391,7 @@ export default function App() {
 
     setModalMode(null);
     showToast('Entry updated!');
-    void runCloudSync(() =>
+    void runCloudSave(() =>
       syncUpdateEntry(exerciseId, entryId, {
         weight: payload.weight,
         unit: settings.unit,
@@ -384,7 +420,7 @@ export default function App() {
         .sort(sortExercisesRecentDesc)
     );
     showToast('Entry deleted.');
-    void runCloudSync(() => syncDeleteEntry(exerciseId, entryId));
+    void runCloudSave(() => syncDeleteEntry(exerciseId, entryId));
   };
 
   const handleEditExercise = (
@@ -417,7 +453,7 @@ export default function App() {
     );
     setModalMode(null);
     showToast('Workout details updated.');
-    void runCloudSync(() =>
+    void runCloudSave(() =>
       syncUpdateExercise(exerciseId, {
         name: payload.name,
         equipment: payload.equipment,
@@ -435,7 +471,7 @@ export default function App() {
       setSelectedExerciseId(null);
     }
     showToast('Workout deleted.');
-    void runCloudSync(() => syncDeleteExercise(exerciseId));
+    void runCloudSave(() => syncDeleteExercise(exerciseId));
   };
 
   const handleImportJson = async (jsonText: string) => {
@@ -453,9 +489,8 @@ export default function App() {
           setExercises(synced.exercises);
           setSettings(synced.settings);
           setLastSyncedAt(synced.syncedAt);
-          setPendingLocalExercises([]);
           setSyncStatus('synced');
-          showToast(`Imported & synced ${imported.exercises.length} workout(s) to SQLite!`);
+          showToast(`Imported & saved ${imported.exercises.length} workout(s)!`);
           return;
         } catch {
           setSyncStatus('offline');
@@ -466,66 +501,6 @@ export default function App() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to import JSON file.';
       showToast(msg, 'error');
-    }
-  };
-
-  const handleSyncNow = async () => {
-    if (!authStatus?.authenticated) return;
-    setSyncStatus('syncing');
-    try {
-      const toUpload =
-        pendingLocalExercises.length > 0
-          ? mergeExerciseLists(exercises, pendingLocalExercises)
-          : exercises;
-      const synced = await syncImportState(toUpload, settings);
-      setExercises(synced.exercises);
-      setSettings(synced.settings);
-      setLastSyncedAt(synced.syncedAt);
-      setPendingLocalExercises([]);
-      setSyncStatus('synced');
-      showToast('Synced with Railway SQLite!');
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setAuthStatus((prev) =>
-          prev ? { ...prev, authenticated: false, user: null } : prev
-        );
-        setSyncStatus('signed-out');
-        showToast('Please sign in with Google to sync.', 'error');
-      } else {
-        setSyncStatus('error');
-        showToast('Could not reach SQLite server. Saved locally.', 'error');
-      }
-    }
-  };
-
-  const handleRefreshFromCloud = async () => {
-    if (!authStatus?.authenticated) return;
-    setSyncStatus('syncing');
-    try {
-      const cloud = await fetchCloudState();
-      setExercises(cloud.exercises);
-      setSettings(cloud.settings);
-      setLastSyncedAt(cloud.syncedAt);
-      setPendingLocalExercises([]);
-      if (
-        selectedExerciseId &&
-        !cloud.exercises.some((ex) => ex.id === selectedExerciseId)
-      ) {
-        setSelectedExerciseId(null);
-      }
-      setSyncStatus('synced');
-      showToast(`Loaded ${cloud.exercises.length} workout(s) from SQLite.`);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setAuthStatus((prev) =>
-          prev ? { ...prev, authenticated: false, user: null } : prev
-        );
-        setSyncStatus('signed-out');
-        showToast('Please sign in with Google.', 'error');
-      } else {
-        setSyncStatus('offline');
-        showToast('Could not reach SQLite server.', 'error');
-      }
     }
   };
 
@@ -540,7 +515,6 @@ export default function App() {
     );
     setSyncStatus('signed-out');
     setLastSyncedAt(null);
-    setPendingLocalExercises([]);
     showToast('Signed out.');
   };
 
@@ -582,17 +556,6 @@ export default function App() {
           </button>
 
           <div className="flex items-center gap-2 shrink-0">
-            {authStatus?.authEnforced &&
-              !authStatus.authenticated &&
-              authStatus.oauthConfigured && (
-                <a
-                  href={getGoogleSignInUrl()}
-                  className="h-7 px-2.5 rounded-lg bg-[#F97316]/15 hover:bg-[#F97316]/25 border border-[#F97316]/35 text-[11px] font-bold text-[#FDBA74] inline-flex items-center transition-colors"
-                >
-                  Sign In
-                </a>
-              )}
-
             {/* Quick lbs / kg Toggle */}
             <div
               role="group"
@@ -615,35 +578,20 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            {/* Signed-in Avatar Pill / Sign In Button */}
+            <AccountMenu
+              authStatus={authStatus}
+              syncStatus={syncStatus}
+              lastSyncedAt={lastSyncedAt}
+              onSignOut={handleSignOut}
+            />
           </div>
         </div>
       </header>
 
       {/* Main Content Container */}
       <main className="flex-1 mx-auto w-full max-w-lg px-4 pt-4">
-        {/* One-click Local-to-SQLite Migration Banner */}
-        {authStatus?.authenticated && pendingLocalExercises.length > 0 && (
-          <div className="mb-4 rounded-2xl bg-[#F97316]/10 border border-[#F97316]/30 p-3.5 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-[#F3F5F8]">
-                Upload {pendingLocalExercises.length} local workout(s) to SQLite
-              </p>
-              <p className="text-[11px] text-[#FDBA74]">
-                Sync your existing browser workouts to Railway cloud storage.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleSyncNow}
-              disabled={syncStatus === 'syncing'}
-              className="shrink-0 h-9 px-3 rounded-xl bg-[#F97316] hover:bg-[#FB923C] disabled:opacity-60 text-xs font-bold text-[#0A0C10] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <CloudUploadIcon className="w-3.5 h-3.5" />
-              {syncStatus === 'syncing' ? 'Syncing…' : 'Upload'}
-            </button>
-          </div>
-        )}
-
         {activeTab === 'exercises' && selectedExercise ? (
           <ExerciseDetailView
             exercise={selectedExercise}
@@ -675,9 +623,6 @@ export default function App() {
             authStatus={authStatus}
             syncStatus={syncStatus}
             lastSyncedAt={lastSyncedAt}
-            pendingLocalCount={pendingLocalExercises.length}
-            onSyncNow={handleSyncNow}
-            onRefreshFromCloud={handleRefreshFromCloud}
             onSignOut={handleSignOut}
           />
         )}
