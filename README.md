@@ -11,8 +11,8 @@ A lightweight, gym-independent React app with a Node 22 + SQLite backend for tra
 ## Features
 - **Workout Roster**: Track each exercise with its current best weight (or **Bodyweight** for reps-only movements), best reps, **Machine / No Machine** tag, last updated date, and an automatic **Up / Down / Mixed** delta badge.
 - **Per-Workout History**: Every update is saved with its date and optional note, building a dedicated chronological history and progression chart (Weight or Reps) for each workout—recording both gains and dips.
-- **Auto-Sync to SQLite**: Changes automatically persist to SQLite on Railway with `localStorage` caching and one-click upload of any existing local workouts.
-- **Overview & Backup**: See total tracked workouts, trending up/down counts, a recent activity feed, instant **`lbs` / `kg`** conversion, manual **Sync Now / Refresh Cloud**, and local **JSON Export / Import**.
+- **Automatic SQLite Persistence**: Every edit saves automatically to SQLite on Railway with `localStorage` caching, automatic local-workout merging on sign-in, and automatic flush on reconnect.
+- **Overview & Backup**: See total tracked workouts, trending up/down counts, a recent activity feed, instant **`lbs` / `kg`** conversion, Google Sign-In / Sign Out account status, and local **JSON Export / Import**.
 
 ## Run Locally
 Requires **Node.js >= 22.18.0** (for built-in `node:sqlite` and TypeScript execution).
