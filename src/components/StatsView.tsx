@@ -355,7 +355,7 @@ export function StatsView({
           <p className="text-xs text-[#8E98A8] rounded-xl bg-[#0D1016] border border-white/[0.08] p-3">
             {syncStatus === 'offline'
               ? 'Could not reach the Railway SQLite server. Changes are saved locally and can be synced once reconnected.'
-              : 'Google Sign-In is not configured on the server yet. Set AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET, and AUTH_SECRET in Railway environment variables.'}
+              : 'Google Sign-In is not configured on the server yet. Set AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET in Railway environment variables.'}
           </p>
         )}
       </section>

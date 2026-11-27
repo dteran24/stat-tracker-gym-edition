@@ -45,7 +45,6 @@ npm test
    - (Optional for local OAuth testing: `http://localhost:5173/api/auth/google/callback`)
 4. Configure Railway environment variables:
    - `STAT_TRACKER_DB_PATH=/data/stat-tracker.db`
-   - `AUTH_SECRET=<random-32+-char-secret>` (e.g., `openssl rand -base64 32`)
    - `AUTH_GOOGLE_ID=<your-google-oauth-client-id>`
    - `AUTH_GOOGLE_SECRET=<your-google-oauth-client-secret>`
 5. (Optional) Set Railway's Healthcheck Path to `/api/health`.

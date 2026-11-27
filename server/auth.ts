@@ -46,13 +46,18 @@ export function isAuthEnforced(): boolean {
   return isPublicMode() || isOAuthConfigured();
 }
 
-function getAuthSecret(): string {
-  const configured = process.env.AUTH_SECRET?.trim();
-  if (configured) return configured;
+function getAuthSecret(): Buffer | string {
+  const googleSecret = process.env.AUTH_GOOGLE_SECRET?.trim();
+  if (googleSecret) {
+    return crypto
+      .createHmac('sha256', googleSecret)
+      .update('stat-tracker-session-key-v1')
+      .digest();
+  }
   if (process.env.NODE_ENV !== 'production') {
     return LOCAL_DEV_SECRET;
   }
-  throw new Error('AUTH_SECRET must be set in production.');
+  throw new Error('AUTH_GOOGLE_SECRET must be set in production.');
 }
 
 function isSecureRequest(req: IncomingMessage): boolean {
