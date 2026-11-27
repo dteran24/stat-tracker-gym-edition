@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ActiveTab,
   AppSettings,
@@ -9,32 +9,34 @@ import type {
   WeightUnit,
 } from './types';
 import { BottomNav } from './components/BottomNav';
-import {
-  DriveConfirmModal,
-  type DriveDialogState,
-} from './components/DriveConfirmModal';
 import { EntryModal, type ModalMode } from './components/EntryModal';
 import { ExerciseDetailView } from './components/ExerciseDetailView';
 import { ExerciseListView } from './components/ExerciseListView';
-import { DumbbellIcon } from './components/Icons';
+import { CloudUploadIcon, DumbbellIcon } from './components/Icons';
 import { StatsView } from './components/StatsView';
 import {
-  disconnectGoogleDrive,
-  downloadBackupFromDrive,
-  DriveActionCancelledError,
-  inspectDriveBeforeSync,
-  isGoogleDriveConfigured,
-  requestDriveAccessToken,
-  uploadBackupToDrive,
-} from './utils/googleDrive';
+  ApiError,
+  fetchAuthStatus,
+  fetchCloudState,
+  getGoogleSignInUrl,
+  logoutSession,
+  syncAddEntry,
+  syncCreateExercise,
+  syncDeleteEntry,
+  syncDeleteExercise,
+  syncImportState,
+  syncSettings,
+  syncUpdateEntry,
+  syncUpdateExercise,
+  type AuthStatus,
+  type SyncStatus,
+} from './utils/api';
 import {
   createId,
-  loadDriveSyncCache,
   loadExercises,
   loadSettings,
   parseBackupJson,
   saveExercises,
-  saveLastDriveSyncedAt,
   saveSettings,
   sortEntriesDesc,
   sortExercisesRecentDesc,
@@ -45,6 +47,36 @@ interface ToastState {
   tone: 'success' | 'error';
 }
 
+function mergeExerciseLists(
+  base: TrackedExercise[],
+  incoming: TrackedExercise[]
+): TrackedExercise[] {
+  const byId = new Map<string, TrackedExercise>();
+  for (const ex of base) byId.set(ex.id, ex);
+
+  for (const item of incoming) {
+    const existing = byId.get(item.id);
+    if (!existing) {
+      byId.set(item.id, item);
+    } else {
+      const entriesById = new Map<string, StatEntry>();
+      for (const entry of existing.entries) entriesById.set(entry.id, entry);
+      for (const entry of item.entries) entriesById.set(entry.id, entry);
+      const mergedEntries = Array.from(entriesById.values()).sort(sortEntriesDesc);
+
+      byId.set(item.id, {
+        ...existing,
+        ...item,
+        entries: mergedEntries,
+        createdAt: Math.min(existing.createdAt, item.createdAt),
+        updatedAt: Math.max(existing.updatedAt, item.updatedAt),
+      });
+    }
+  }
+
+  return Array.from(byId.values()).sort(sortExercisesRecentDesc);
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('exercises');
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
@@ -52,12 +84,11 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [driveBusyAction, setDriveBusyAction] = useState<'sync' | 'restore' | null>(null);
-  const [driveDialog, setDriveDialog] = useState<DriveDialogState | null>(null);
-  const [lastDriveSyncedAt, setLastDriveSyncedAt] = useState<string | null>(
-    () => loadDriveSyncCache().lastDriveSyncedAt
-  );
-  const driveConfigured = isGoogleDriveConfigured();
+
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [pendingLocalExercises, setPendingLocalExercises] = useState<TrackedExercise[]>([]);
 
   useEffect(() => {
     saveExercises(exercises);
@@ -73,9 +104,97 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
-    setToast({ message, tone });
-  };
+  const showToast = useCallback(
+    (message: string, tone: 'success' | 'error' = 'success') => {
+      setToast({ message, tone });
+    },
+    []
+  );
+
+  // Surface OAuth redirect errors cleanly if present in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get('authError');
+    if (authError) {
+      showToast('Google Sign-In did not complete. Please try again.', 'error');
+      params.delete('authError');
+      const nextQuery = params.toString();
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`;
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, [showToast]);
+
+  // Initial auth check + hydrate from Railway SQLite
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      try {
+        const auth = await fetchAuthStatus();
+        if (cancelled) return;
+        setAuthStatus(auth);
+
+        if (!auth.authenticated) {
+          setSyncStatus('signed-out');
+          return;
+        }
+
+        const localSnapshot = loadExercises();
+        const cloud = await fetchCloudState();
+        if (cancelled) return;
+
+        const cloudIds = new Set(cloud.exercises.map((ex) => ex.id));
+        const localOnly = localSnapshot.filter((ex) => !cloudIds.has(ex.id));
+
+        if (cloud.exercises.length === 0 && localSnapshot.length > 0) {
+          // Keep existing local workouts visible and offer one-click upload to SQLite
+          setPendingLocalExercises(localSnapshot);
+        } else {
+          setExercises(cloud.exercises);
+          setSettings(cloud.settings);
+          setPendingLocalExercises(localOnly);
+        }
+
+        setLastSyncedAt(cloud.syncedAt);
+        setSyncStatus('synced');
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 401) {
+          setSyncStatus('signed-out');
+        } else {
+          setSyncStatus('offline');
+        }
+      }
+    }
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const runCloudSync = useCallback(
+    async (task: () => Promise<{ syncedAt: string }>) => {
+      if (!authStatus?.authenticated) return;
+      setSyncStatus('syncing');
+      try {
+        const res = await task();
+        setLastSyncedAt(res.syncedAt);
+        setSyncStatus('synced');
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthStatus((prev) =>
+            prev ? { ...prev, authenticated: false, user: null } : prev
+          );
+          setSyncStatus('signed-out');
+          showToast('Session expired. Sign in with Google to resume cloud sync.', 'error');
+        } else {
+          setSyncStatus('offline');
+        }
+      }
+    },
+    [authStatus?.authenticated, showToast]
+  );
 
   const selectedExercise = useMemo(
     () =>
@@ -87,7 +206,9 @@ export default function App() {
 
   const handleUnitChange = (nextUnit: WeightUnit) => {
     if (nextUnit === settings.unit) return;
-    setSettings({ unit: nextUnit });
+    const nextSettings: AppSettings = { unit: nextUnit };
+    setSettings(nextSettings);
+    void runCloudSync(() => syncSettings(nextSettings));
   };
 
   const handleCreateExercise = (payload: {
@@ -129,6 +250,7 @@ export default function App() {
     setExercises((prev) => [newExercise, ...prev].sort(sortExercisesRecentDesc));
     setModalMode(null);
     showToast(`Added "${payload.name}"!`);
+    void runCloudSync(() => syncCreateExercise(newExercise));
   };
 
   const handleLogUpdate = (
@@ -155,6 +277,8 @@ export default function App() {
       createdAt: now,
       updatedAt: now,
     };
+    const barWeightUnit =
+      payload.barWeight !== undefined ? settings.unit : undefined;
 
     setExercises((prev) =>
       prev
@@ -164,8 +288,7 @@ export default function App() {
                 ...ex,
                 weightMode: payload.weightMode,
                 barWeight: payload.barWeight,
-                barWeightUnit:
-                  payload.barWeight !== undefined ? settings.unit : undefined,
+                barWeightUnit,
                 entries: [newEntry, ...ex.entries].sort(sortEntriesDesc),
                 updatedAt: now,
               }
@@ -176,6 +299,15 @@ export default function App() {
 
     setModalMode(null);
     showToast('Update recorded!');
+    void runCloudSync(() =>
+      syncAddEntry(exerciseId, {
+        entry: newEntry,
+        weightMode: payload.weightMode,
+        barWeight: payload.barWeight,
+        barWeightUnit,
+        updatedAt: now,
+      })
+    );
   };
 
   const handleEditEntry = (
@@ -190,6 +322,8 @@ export default function App() {
     }
   ) => {
     const now = Date.now();
+    const note = payload.note || undefined;
+
     setExercises((prev) =>
       prev
         .map((ex) =>
@@ -206,7 +340,7 @@ export default function App() {
                           weightDetail: payload.weightDetail,
                           reps: payload.reps,
                           date: payload.date,
-                          note: payload.note || undefined,
+                          note,
                           updatedAt: now,
                         }
                       : entry
@@ -221,6 +355,17 @@ export default function App() {
 
     setModalMode(null);
     showToast('Entry updated!');
+    void runCloudSync(() =>
+      syncUpdateEntry(exerciseId, entryId, {
+        weight: payload.weight,
+        unit: settings.unit,
+        weightDetail: payload.weightDetail,
+        reps: payload.reps,
+        date: payload.date,
+        note,
+        updatedAt: now,
+      })
+    );
   };
 
   const handleDeleteEntry = (exerciseId: string, entryId: string) => {
@@ -239,6 +384,7 @@ export default function App() {
         .sort(sortExercisesRecentDesc)
     );
     showToast('Entry deleted.');
+    void runCloudSync(() => syncDeleteEntry(exerciseId, entryId));
   };
 
   const handleEditExercise = (
@@ -251,6 +397,9 @@ export default function App() {
     }
   ) => {
     const now = Date.now();
+    const barWeightUnit =
+      payload.barWeight !== undefined ? settings.unit : undefined;
+
     setExercises((prev) =>
       prev.map((ex) =>
         ex.id === exerciseId
@@ -260,8 +409,7 @@ export default function App() {
               equipment: payload.equipment,
               weightMode: payload.weightMode,
               barWeight: payload.barWeight,
-              barWeightUnit:
-                payload.barWeight !== undefined ? settings.unit : undefined,
+              barWeightUnit,
               updatedAt: now,
             }
           : ex
@@ -269,6 +417,16 @@ export default function App() {
     );
     setModalMode(null);
     showToast('Workout details updated.');
+    void runCloudSync(() =>
+      syncUpdateExercise(exerciseId, {
+        name: payload.name,
+        equipment: payload.equipment,
+        weightMode: payload.weightMode,
+        barWeight: payload.barWeight,
+        barWeightUnit,
+        updatedAt: now,
+      })
+    );
   };
 
   const handleDeleteExercise = (exerciseId: string) => {
@@ -277,40 +435,33 @@ export default function App() {
       setSelectedExerciseId(null);
     }
     showToast('Workout deleted.');
+    void runCloudSync(() => syncDeleteExercise(exerciseId));
   };
 
-  const handleImportJson = (jsonText: string) => {
+  const handleImportJson = async (jsonText: string) => {
     try {
       const imported = parseBackupJson(jsonText);
-      setExercises((prev) => {
-        const byId = new Map<string, TrackedExercise>();
-        for (const ex of prev) byId.set(ex.id, ex);
-
-        for (const incoming of imported.exercises) {
-          const existing = byId.get(incoming.id);
-          if (!existing) {
-            byId.set(incoming.id, incoming);
-          } else {
-            const entriesById = new Map<string, StatEntry>();
-            for (const entry of existing.entries) entriesById.set(entry.id, entry);
-            for (const entry of incoming.entries) entriesById.set(entry.id, entry);
-            const mergedEntries = Array.from(entriesById.values()).sort(sortEntriesDesc);
-
-            byId.set(incoming.id, {
-              ...existing,
-              ...incoming,
-              entries: mergedEntries,
-              createdAt: Math.min(existing.createdAt, incoming.createdAt),
-              updatedAt: Math.max(existing.updatedAt, incoming.updatedAt),
-            });
-          }
-        }
-
-        return Array.from(byId.values()).sort(sortExercisesRecentDesc);
-      });
+      setExercises((prev) => mergeExerciseLists(prev, imported.exercises));
       if (imported.settings) {
         setSettings(imported.settings);
       }
+
+      if (authStatus?.authenticated) {
+        setSyncStatus('syncing');
+        try {
+          const synced = await syncImportState(imported.exercises, imported.settings);
+          setExercises(synced.exercises);
+          setSettings(synced.settings);
+          setLastSyncedAt(synced.syncedAt);
+          setPendingLocalExercises([]);
+          setSyncStatus('synced');
+          showToast(`Imported & synced ${imported.exercises.length} workout(s) to SQLite!`);
+          return;
+        } catch {
+          setSyncStatus('offline');
+        }
+      }
+
       showToast(`Imported & merged ${imported.exercises.length} workout(s)!`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to import JSON file.';
@@ -318,112 +469,79 @@ export default function App() {
     }
   };
 
-  const handleSyncToDrive = async () => {
-    if (driveBusyAction) return;
-    setDriveBusyAction('sync');
+  const handleSyncNow = async () => {
+    if (!authStatus?.authenticated) return;
+    setSyncStatus('syncing');
     try {
-      const token = await requestDriveAccessToken();
-      const inspection = await inspectDriveBeforeSync(token, exercises.length);
-
-      if (inspection.conflictReason && inspection.remoteFile) {
-        setDriveDialog({
-          type: 'sync-conflict',
-          reason: inspection.conflictReason,
-          remoteFile: inspection.remoteFile,
-          lastDriveSyncedAt: inspection.lastDriveSyncedAt,
-        });
-        return;
-      }
-
-      const saved = await uploadBackupToDrive(
-        token,
-        exercises,
-        settings,
-        inspection.remoteFile?.id ?? null
-      );
-      setLastDriveSyncedAt(saved.modifiedTime);
-      showToast('Synced backup to Google Drive!');
+      const toUpload =
+        pendingLocalExercises.length > 0
+          ? mergeExerciseLists(exercises, pendingLocalExercises)
+          : exercises;
+      const synced = await syncImportState(toUpload, settings);
+      setExercises(synced.exercises);
+      setSettings(synced.settings);
+      setLastSyncedAt(synced.syncedAt);
+      setPendingLocalExercises([]);
+      setSyncStatus('synced');
+      showToast('Synced with Railway SQLite!');
     } catch (err) {
-      if (err instanceof DriveActionCancelledError) {
-        showToast(err.message, 'error');
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthStatus((prev) =>
+          prev ? { ...prev, authenticated: false, user: null } : prev
+        );
+        setSyncStatus('signed-out');
+        showToast('Please sign in with Google to sync.', 'error');
       } else {
-        const msg = err instanceof Error ? err.message : 'Failed to sync to Google Drive.';
-        showToast(msg, 'error');
+        setSyncStatus('error');
+        showToast('Could not reach SQLite server. Saved locally.', 'error');
       }
-    } finally {
-      setDriveBusyAction(null);
     }
   };
 
-  const handleConfirmOverwriteDrive = async () => {
-    if (driveDialog?.type !== 'sync-conflict' || driveBusyAction) return;
-    const remoteFileId = driveDialog.remoteFile.id;
-    setDriveDialog(null);
-    setDriveBusyAction('sync');
+  const handleRefreshFromCloud = async () => {
+    if (!authStatus?.authenticated) return;
+    setSyncStatus('syncing');
     try {
-      const token = await requestDriveAccessToken();
-      const saved = await uploadBackupToDrive(token, exercises, settings, remoteFileId);
-      setLastDriveSyncedAt(saved.modifiedTime);
-      showToast('Overwrote Google Drive backup!');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to overwrite Google Drive backup.';
-      showToast(msg, 'error');
-    } finally {
-      setDriveBusyAction(null);
-    }
-  };
-
-  const handleRestoreFromDrive = async () => {
-    if (driveBusyAction) return;
-    setDriveDialog(null);
-    setDriveBusyAction('restore');
-    try {
-      const token = await requestDriveAccessToken();
-      const backup = await downloadBackupFromDrive(token);
-      if (!backup) {
-        showToast('No backup found in Google Drive yet.', 'error');
-        return;
+      const cloud = await fetchCloudState();
+      setExercises(cloud.exercises);
+      setSettings(cloud.settings);
+      setLastSyncedAt(cloud.syncedAt);
+      setPendingLocalExercises([]);
+      if (
+        selectedExerciseId &&
+        !cloud.exercises.some((ex) => ex.id === selectedExerciseId)
+      ) {
+        setSelectedExerciseId(null);
       }
-      setDriveDialog({
-        type: 'confirm-restore',
-        backup,
-      });
+      setSyncStatus('synced');
+      showToast(`Loaded ${cloud.exercises.length} workout(s) from SQLite.`);
     } catch (err) {
-      if (err instanceof DriveActionCancelledError) {
-        showToast(err.message, 'error');
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthStatus((prev) =>
+          prev ? { ...prev, authenticated: false, user: null } : prev
+        );
+        setSyncStatus('signed-out');
+        showToast('Please sign in with Google.', 'error');
       } else {
-        const msg =
-          err instanceof Error ? err.message : 'Failed to load backup from Google Drive.';
-        showToast(msg, 'error');
+        setSyncStatus('offline');
+        showToast('Could not reach SQLite server.', 'error');
       }
-    } finally {
-      setDriveBusyAction(null);
     }
   };
 
-  const handleConfirmRestore = () => {
-    if (driveDialog?.type !== 'confirm-restore') return;
-    const { backup } = driveDialog;
-    setExercises(backup.exercises);
-    if (backup.settings) {
-      setSettings(backup.settings);
+  const handleSignOut = async () => {
+    try {
+      await logoutSession();
+    } catch {
+      // Ignore network errors on sign out
     }
-    if (
-      selectedExerciseId &&
-      !backup.exercises.some((ex) => ex.id === selectedExerciseId)
-    ) {
-      setSelectedExerciseId(null);
-    }
-    saveLastDriveSyncedAt(backup.modifiedTime);
-    setLastDriveSyncedAt(backup.modifiedTime);
-    setDriveDialog(null);
-    showToast(`Restored ${backup.exercises.length} workout(s) from Google Drive!`);
-  };
-
-  const handleDisconnectDrive = () => {
-    disconnectGoogleDrive();
-    setLastDriveSyncedAt(null);
-    showToast('Reset Google Drive link.');
+    setAuthStatus((prev) =>
+      prev ? { ...prev, authenticated: false, user: null } : prev
+    );
+    setSyncStatus('signed-out');
+    setLastSyncedAt(null);
+    setPendingLocalExercises([]);
+    showToast('Signed out.');
   };
 
   const handleOpenExercise = (exerciseId: string) => {
@@ -463,33 +581,69 @@ export default function App() {
             </div>
           </button>
 
-          {/* Quick lbs / kg Toggle */}
-          <div
-            role="group"
-            aria-label="Weight unit"
-            className="inline-flex rounded-lg bg-[#12161E] p-0.5 border border-white/10 shrink-0"
-          >
-            {(['lbs', 'kg'] as const).map((u) => (
-              <button
-                key={u}
-                id={`header-unit-${u}`}
-                type="button"
-                onClick={() => handleUnitChange(u)}
-                className={`h-7 px-2.5 rounded-md text-[11px] font-bold uppercase transition-colors cursor-pointer ${
-                  settings.unit === u
-                    ? 'bg-[#F97316] text-[#0A0C10]'
-                    : 'text-[#8E98A8] hover:text-[#F3F5F8]'
-                }`}
-              >
-                {u}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 shrink-0">
+            {authStatus?.authEnforced &&
+              !authStatus.authenticated &&
+              authStatus.oauthConfigured && (
+                <a
+                  href={getGoogleSignInUrl()}
+                  className="h-7 px-2.5 rounded-lg bg-[#F97316]/15 hover:bg-[#F97316]/25 border border-[#F97316]/35 text-[11px] font-bold text-[#FDBA74] inline-flex items-center transition-colors"
+                >
+                  Sign In
+                </a>
+              )}
+
+            {/* Quick lbs / kg Toggle */}
+            <div
+              role="group"
+              aria-label="Weight unit"
+              className="inline-flex rounded-lg bg-[#12161E] p-0.5 border border-white/10 shrink-0"
+            >
+              {(['lbs', 'kg'] as const).map((u) => (
+                <button
+                  key={u}
+                  id={`header-unit-${u}`}
+                  type="button"
+                  onClick={() => handleUnitChange(u)}
+                  className={`h-7 px-2.5 rounded-md text-[11px] font-bold uppercase transition-colors cursor-pointer ${
+                    settings.unit === u
+                      ? 'bg-[#F97316] text-[#0A0C10]'
+                      : 'text-[#8E98A8] hover:text-[#F3F5F8]'
+                  }`}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content Container */}
       <main className="flex-1 mx-auto w-full max-w-lg px-4 pt-4">
+        {/* One-click Local-to-SQLite Migration Banner */}
+        {authStatus?.authenticated && pendingLocalExercises.length > 0 && (
+          <div className="mb-4 rounded-2xl bg-[#F97316]/10 border border-[#F97316]/30 p-3.5 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-[#F3F5F8]">
+                Upload {pendingLocalExercises.length} local workout(s) to SQLite
+              </p>
+              <p className="text-[11px] text-[#FDBA74]">
+                Sync your existing browser workouts to Railway cloud storage.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSyncNow}
+              disabled={syncStatus === 'syncing'}
+              className="shrink-0 h-9 px-3 rounded-xl bg-[#F97316] hover:bg-[#FB923C] disabled:opacity-60 text-xs font-bold text-[#0A0C10] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <CloudUploadIcon className="w-3.5 h-3.5" />
+              {syncStatus === 'syncing' ? 'Syncing…' : 'Upload'}
+            </button>
+          </div>
+        )}
+
         {activeTab === 'exercises' && selectedExercise ? (
           <ExerciseDetailView
             exercise={selectedExercise}
@@ -518,12 +672,13 @@ export default function App() {
             onChangeUnit={handleUnitChange}
             onImportJson={handleImportJson}
             onOpenExercise={handleOpenExercise}
-            driveConfigured={driveConfigured}
-            driveBusyAction={driveBusyAction}
-            lastDriveSyncedAt={lastDriveSyncedAt}
-            onSyncToDrive={handleSyncToDrive}
-            onRestoreFromDrive={handleRestoreFromDrive}
-            onDisconnectDrive={handleDisconnectDrive}
+            authStatus={authStatus}
+            syncStatus={syncStatus}
+            lastSyncedAt={lastSyncedAt}
+            pendingLocalCount={pendingLocalExercises.length}
+            onSyncNow={handleSyncNow}
+            onRefreshFromCloud={handleRefreshFromCloud}
+            onSignOut={handleSignOut}
           />
         )}
       </main>
@@ -537,17 +692,6 @@ export default function App() {
         onSubmitLogUpdate={handleLogUpdate}
         onSubmitEditEntry={handleEditEntry}
         onSubmitEditExercise={handleEditExercise}
-      />
-
-      {/* Google Drive Conflict / Restore Confirmation Modal */}
-      <DriveConfirmModal
-        dialog={driveDialog}
-        localExerciseCount={exercises.length}
-        localEntryCount={exercises.reduce((sum, ex) => sum + ex.entries.length, 0)}
-        onClose={() => setDriveDialog(null)}
-        onConfirmOverwriteDrive={handleConfirmOverwriteDrive}
-        onRestoreInstead={handleRestoreFromDrive}
-        onConfirmRestore={handleConfirmRestore}
       />
 
       {/* Toast Notification */}

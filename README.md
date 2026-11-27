@@ -1,53 +1,51 @@
 # Stat Tracker — Gym Edition
 
-A lightweight, gym-independent React SPA for tracking your best **weight** and **# of reps** per workout/exercise. Update numbers whenever they go up or down—no live set-by-set logging required.
+A lightweight, gym-independent React app with a Node 22 + SQLite backend for tracking your best **weight** and **# of reps** per workout/exercise. Update numbers whenever they go up or down—no live set-by-set logging required.
 
 ## Tech Stack
-- **React 19 + TypeScript + Vite 6**
-- **Tailwind CSS v4**
-- **Browser `localStorage`** (offline-ready) with **JSON Export / Import** and optional **Google Drive JSON Sync** (browser-only, no backend)
+- **React 19 + TypeScript + Vite 6 + Tailwind CSS v4**
+- **Node 22 built-in `node:sqlite` (`DatabaseSync`)** — zero native build dependencies, WAL mode enabled
+- **Google Sign-In (OAuth 2.0)** with signed `HttpOnly` session cookies and per-user data isolation (plus seamless local-dev fallback when OAuth env vars are unset)
+- **Browser `localStorage`** offline cache + **JSON Export / Import**
 
 ## Features
 - **Workout Roster**: Track each exercise with its current best weight (or **Bodyweight** for reps-only movements), best reps, **Machine / No Machine** tag, last updated date, and an automatic **Up / Down / Mixed** delta badge.
 - **Per-Workout History**: Every update is saved with its date and optional note, building a dedicated chronological history and progression chart (Weight or Reps) for each workout—recording both gains and dips.
-- **Overview & Backup**: See total tracked workouts, trending up/down counts, a recent activity feed, instant **`lbs` / `kg`** conversion, manual **Google Drive Sync / Restore** (with conflict warnings), and local JSON backup Export / Import.
-
-## Google Drive Sync Setup (Optional)
-Google Drive sync runs entirely in the browser using Google Identity Services (`google.accounts.oauth2.initTokenClient`) and the Drive REST API v3 with the minimal `https://www.googleapis.com/auth/drive.file` scope. Backups are stored as a single file `stat-tracker-backup.json` inside a `Stat Tracker Gym` folder in your Drive.
-
-1. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable the **Google Drive API**.
-2. Configure the **OAuth consent screen** (External; add yourself as a test user while in Testing mode).
-3. Under **APIs & Services → Credentials**, create an **OAuth client ID** of type **Web application**.
-4. Add your Authorized JavaScript origins:
-   - Local dev: `http://localhost:5173`
-   - Production: your Cloudflare Pages URL (e.g., `https://<project>.pages.dev` and/or custom domain)
-5. Copy `.env.example` to `.env.local` and paste your Client ID:
-   ```bash
-   cp .env.example .env.local
-   ```
-   ```env
-   VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
-   ```
-
-> If `VITE_GOOGLE_CLIENT_ID` is not set, local storage and manual JSON Export / Import continue to work offline.
+- **Auto-Sync to SQLite**: Changes automatically persist to SQLite on Railway with `localStorage` caching and one-click upload of any existing local workouts.
+- **Overview & Backup**: See total tracked workouts, trending up/down counts, a recent activity feed, instant **`lbs` / `kg`** conversion, manual **Sync Now / Refresh Cloud**, and local **JSON Export / Import**.
 
 ## Run Locally
+Requires **Node.js >= 22.18.0** (for built-in `node:sqlite` and TypeScript execution).
+
 ```bash
 npm install
+```
+
+Run the SQLite API server and Vite frontend in two terminals:
+```bash
+# Terminal 1 — SQLite API server (http://localhost:3001)
+npm run dev:server
+
+# Terminal 2 — Vite frontend with /api proxy (http://localhost:5173)
 npm run dev
 ```
 
-## Build for Production
+> In local development (when `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` and `PUBLIC_MODE=true` are not set), the server automatically uses a `local-user` profile backed by `./data/stat-tracker.db`.
+
+## Run Tests
 ```bash
-npm run build
-npm run preview
+npm test
 ```
 
-## Deploy on Cloudflare Pages
-1. Connect your GitHub repository in the Cloudflare Dashboard (**Workers & Pages → Create → Pages**).
-2. Configure the build settings:
-   - **Framework preset**: `Vite` (or `None`)
-   - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
-3. Under **Settings → Environment variables**, add `VITE_GOOGLE_CLIENT_ID` for Production (and Preview if desired), then redeploy so Vite injects it at build time.
-4. Make sure your deployed `*.pages.dev` (and any custom domain) is listed under **Authorized JavaScript origins** in your Google OAuth Web Client ID.
+## Deploy on Railway (Single Service + Persistent Volume)
+1. Create a new Railway service from this GitHub repository (Railway will automatically detect the `Dockerfile`).
+2. Attach a **Railway Volume** mounted at `/data`.
+3. In [Google Cloud Console](https://console.cloud.google.com/) (**APIs & Services → Credentials**), create or update an **OAuth 2.0 Client ID** (type: **Web application**) and add your Authorized redirect URI:
+   - `https://<your-railway-domain>/api/auth/google/callback`
+   - (Optional for local OAuth testing: `http://localhost:5173/api/auth/google/callback`)
+4. Configure Railway environment variables:
+   - `STAT_TRACKER_DB_PATH=/data/stat-tracker.db`
+   - `AUTH_SECRET=<random-32+-char-secret>` (e.g., `openssl rand -base64 32`)
+   - `AUTH_GOOGLE_ID=<your-google-oauth-client-id>`
+   - `AUTH_GOOGLE_SECRET=<your-google-oauth-client-secret>`
+5. (Optional) Set Railway's Healthcheck Path to `/api/health`.

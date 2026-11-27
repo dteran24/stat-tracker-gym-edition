@@ -55,9 +55,3 @@ export interface AppBackupPayload {
   settings: AppSettings;
   exercises: TrackedExercise[];
 }
-
-export interface DriveSyncCache {
-  folderId: string | null;
-  fileId: string | null;
-  lastDriveSyncedAt: string | null;
-}
