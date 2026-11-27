@@ -65,37 +65,36 @@
     <main>
       <p><a href="/">&larr; Back to Stat Tracker — Gym Edition</a></p>
       <h1>Privacy Policy</h1>
-      <p class="meta">Last updated: November 25, 2026</p>
+      <p class="meta">Last updated: November 27, 2026</p>
 
       <div class="card">
-        <strong>Short version:</strong> Stat Tracker — Gym Edition runs entirely in your browser. We do not operate a backend database, do not collect analytics, and never sell or share your data.
+        <strong>Short version:</strong> Stat Tracker — Gym Edition stores your workouts locally in your browser and, when you sign in with Google, syncs them to a private SQLite database tied to your account. We do not collect analytics and never sell or share your data.
       </div>
 
-      <h2>1. Data Stored Locally</h2>
+      <h2>1. Data Stored Locally &amp; in SQLite</h2>
       <p>
-        Your workout exercises, weights, reps, notes, and unit preferences are stored locally in your browser using <code>localStorage</code>. This data never leaves your device unless you explicitly choose to export a JSON file or sync with Google Drive.
+        Your workout exercises, weights, reps, notes, and unit preferences are cached in your browser using <code>localStorage</code> and can be exported/imported anytime as JSON. When signed in with Google, your workouts are automatically synced to the app's SQLite database isolated to your account ID.
       </p>
 
-      <h2>2. Optional Google Drive Sync</h2>
+      <h2>2. Google Sign-In</h2>
       <p>
-        If you choose to use Google Drive Sync, the app signs you in using Google Identity Services directly from your browser and requests only the minimal <code>https://www.googleapis.com/auth/drive.file</code> scope.
+        Sign-in uses standard Google OAuth 2.0 requesting only basic profile scopes (<code>openid</code>, <code>email</code>, <code>profile</code>) to identify your account.
       </p>
       <ul>
-        <li>The app can only create, read, and update its own backup file (<code>stat-tracker-backup.json</code> inside a <code>Stat Tracker Gym</code> folder in your Google Drive).</li>
-        <li>The app cannot view, modify, or access any other files in your Google Drive.</li>
-        <li>Access tokens are held only in browser memory during your session and are never sent to any third-party server.</li>
+        <li>The app does not request access to Google Drive, Gmail, or any other Google services.</li>
+        <li>Sessions are maintained with an encrypted/signed <code>HttpOnly</code> cookie.</li>
       </ul>
 
       <h2>3. Data Sharing &amp; Third Parties</h2>
       <p>
-        We do not collect, store, transmit, sell, or share your personal data or Google user data with any third parties. Your data stays strictly on your device and, if enabled by you, in your own Google Drive account.
+        We do not sell, rent, or share your personal data or workout history with any third parties.
       </p>
 
       <h2>4. Deleting Your Data &amp; Revoking Access</h2>
       <ul>
-        <li>You can clear local data anytime via your browser settings or inside the app.</li>
-        <li>You can delete the <code>Stat Tracker Gym</code> folder directly in your Google Drive.</li>
-        <li>You can revoke the app's Google Drive permission anytime at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer">myaccount.google.com/permissions</a>.</li>
+        <li>You can delete workouts inside the app and clear local browser storage anytime.</li>
+        <li>You can export a full JSON backup of your data at any time.</li>
+        <li>You can revoke Google Sign-In access anytime at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer">myaccount.google.com/permissions</a>.</li>
       </ul>
 
       <h2>5. Contact</h2>
