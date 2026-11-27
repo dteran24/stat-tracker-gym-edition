@@ -77,7 +77,9 @@ export function getAppOrigin(req: IncomingMessage): string {
   const proto =
     typeof forwardedProto === 'string'
       ? forwardedProto.split(',')[0].trim()
-      : 'http';
+      : process.env.NODE_ENV === 'production'
+        ? 'https'
+        : 'http';
   const forwardedHost = req.headers['x-forwarded-host'];
   const host =
     typeof forwardedHost === 'string'
@@ -313,6 +315,12 @@ export async function handleGoogleOAuthCallback(
   clearState();
 
   if (!code || !state || !expectedState || state !== expectedState) {
+    console.error('[oauth] invalid_state', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasExpectedState: Boolean(expectedState),
+      stateMatches: Boolean(state && expectedState && state === expectedState),
+    });
     redirect(res, '/?authError=invalid_state');
     return;
   }
@@ -332,12 +340,28 @@ export async function handleGoogleOAuthCallback(
     });
 
     if (!tokenRes.ok) {
+      let detail = '';
+      try {
+        const errBody = (await tokenRes.json()) as {
+          error?: string;
+          error_description?: string;
+        };
+        detail = [errBody.error, errBody.error_description].filter(Boolean).join(': ');
+      } catch {
+        detail = await tokenRes.text().catch(() => '');
+      }
+      console.error('[oauth] token_exchange_failed', {
+        status: tokenRes.status,
+        redirectUri,
+        detail,
+      });
       redirect(res, '/?authError=token_exchange_failed');
       return;
     }
 
     const tokenData = (await tokenRes.json()) as { access_token?: string };
     if (!tokenData.access_token) {
+      console.error('[oauth] missing_access_token');
       redirect(res, '/?authError=missing_access_token');
       return;
     }
@@ -347,6 +371,7 @@ export async function handleGoogleOAuthCallback(
     });
 
     if (!userRes.ok) {
+      console.error('[oauth] userinfo_failed', { status: userRes.status });
       redirect(res, '/?authError=userinfo_failed');
       return;
     }
@@ -359,6 +384,7 @@ export async function handleGoogleOAuthCallback(
     };
 
     if (!profile.sub) {
+      console.error('[oauth] missing_profile');
       redirect(res, '/?authError=missing_profile');
       return;
     }
@@ -371,7 +397,8 @@ export async function handleGoogleOAuthCallback(
     });
 
     redirect(res, '/');
-  } catch {
+  } catch (err) {
+    console.error('[oauth] unexpected error', err);
     redirect(res, '/?authError=oauth_failed');
   }
 }
