@@ -230,6 +230,23 @@ export function getOptionalUser(req: IncomingMessage): AuthenticatedUser | null 
   };
 }
 
+export function isValidReadApiKey(req: IncomingMessage): boolean {
+  const configuredKey = process.env.STAT_TRACKER_API_KEY?.trim();
+  if (!configuredKey) return false;
+
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader !== 'string') return false;
+
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return false;
+  const providedKey = match[1].trim();
+  if (!providedKey) return false;
+
+  const expectedHash = crypto.createHash('sha256').update(configuredKey, 'utf8').digest();
+  const providedHash = crypto.createHash('sha256').update(providedKey, 'utf8').digest();
+  return crypto.timingSafeEqual(expectedHash, providedHash);
+}
+
 export function requireUser(req: IncomingMessage): AuthenticatedUser {
   const user = getOptionalUser(req);
   if (!user) {

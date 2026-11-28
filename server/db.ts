@@ -224,6 +224,18 @@ export function getUserExercises(db: DatabaseSync, userId: string): TrackedExerc
   return exercises.sort(sortExercisesRecentDesc);
 }
 
+export function listDistinctUserIds(db: DatabaseSync): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT user_id FROM exercises
+       UNION
+       SELECT DISTINCT user_id FROM user_settings
+       ORDER BY user_id ASC`
+    )
+    .all() as unknown as { user_id: string }[];
+  return rows.map((r) => r.user_id).filter(Boolean);
+}
+
 export function getUserState(
   db: DatabaseSync,
   userId: string

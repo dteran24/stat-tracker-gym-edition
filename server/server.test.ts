@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { AddressInfo } from 'node:net';
-import { closeDb, getUserState, mergeImportState, openDatabase } from './db.ts';
+import { closeDb, getDb, getUserState, mergeImportState, openDatabase } from './db.ts';
 import { createServer } from './index.ts';
 import type { TrackedExercise } from '../src/types.ts';
 
@@ -239,6 +239,69 @@ describe('HTTP API + SQLite integration', () => {
       assert.equal(stateRes.status, 401);
     } finally {
       delete process.env.PUBLIC_MODE;
+    }
+  });
+
+  it('supports read-only Bearer STAT_TRACKER_API_KEY on GET /api/state and fails closed for multiple users', async () => {
+    process.env.PUBLIC_MODE = 'true';
+    process.env.STAT_TRACKER_API_KEY = 'super-secret-coach-key';
+    delete process.env.STAT_TRACKER_API_USER_ID;
+
+    try {
+      // Wrong key -> 401
+      let res = await fetch(`${baseUrl}/api/state`, {
+        headers: { Authorization: 'Bearer wrong-key' },
+      });
+      assert.equal(res.status, 401);
+
+      // Valid key with 1 user in DB (local-user from earlier test) -> 200
+      res = await fetch(`${baseUrl}/api/state`, {
+        headers: { Authorization: 'Bearer super-secret-coach-key' },
+      });
+      assert.equal(res.status, 200);
+      const singleUserState = (await res.json()) as {
+        exercises: TrackedExercise[];
+        syncedAt: string;
+      };
+      assert.equal(singleUserState.exercises.length, 1);
+      assert.equal(singleUserState.exercises[0].id, 'ex-2');
+      assert.ok(singleUserState.syncedAt);
+
+      // Write route MUST still reject Bearer API key -> 401 (strictly read-only)
+      res = await fetch(`${baseUrl}/api/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer super-secret-coach-key',
+        },
+        body: JSON.stringify({ unit: 'kg' }),
+      });
+      assert.equal(res.status, 401);
+
+      // Add a second user -> fails closed with 400 when STAT_TRACKER_API_USER_ID is unset
+      mergeImportState(getDb(), 'google:second-user', [
+        { ...sampleExercise('ex-second'), name: 'Overhead Press' },
+      ]);
+      res = await fetch(`${baseUrl}/api/state`, {
+        headers: { Authorization: 'Bearer super-secret-coach-key' },
+      });
+      assert.equal(res.status, 400);
+
+      // Setting STAT_TRACKER_API_USER_ID selects the configured user cleanly -> 200
+      process.env.STAT_TRACKER_API_USER_ID = 'google:second-user';
+      res = await fetch(`${baseUrl}/api/state`, {
+        headers: { Authorization: 'Bearer super-secret-coach-key' },
+      });
+      assert.equal(res.status, 200);
+      const targetedState = (await res.json()) as {
+        exercises: TrackedExercise[];
+      };
+      assert.equal(targetedState.exercises.length, 1);
+      assert.equal(targetedState.exercises[0].name, 'Overhead Press');
+    } finally {
+      delete process.env.PUBLIC_MODE;
+      delete process.env.STAT_TRACKER_API_KEY;
+      delete process.env.STAT_TRACKER_API_USER_ID;
     }
   });
 });

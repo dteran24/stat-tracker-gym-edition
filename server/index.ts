@@ -8,6 +8,7 @@ import {
   handleGoogleOAuthCallback,
   isAuthEnforced,
   isOAuthConfigured,
+  isValidReadApiKey,
   requireUser,
   startGoogleOAuth,
   UnauthorizedError,
@@ -19,6 +20,7 @@ import {
   deleteExerciseRecord,
   getDb,
   getUserState,
+  listDistinctUserIds,
   mergeImportState,
   saveUserSettings,
   updateEntryRecord,
@@ -185,8 +187,33 @@ export function createServer(options?: { distDir?: string }): http.Server {
 
       // Protected API routes
       if (method === 'GET' && pathname === '/api/state') {
-        const user = requireUser(req);
-        const state = getUserState(getDb(), user.id);
+        const db = getDb();
+        let targetUserId: string;
+        if (isValidReadApiKey(req)) {
+          const configuredUserId = process.env.STAT_TRACKER_API_USER_ID?.trim();
+          if (configuredUserId) {
+            targetUserId = configuredUserId;
+          } else {
+            const userIds = listDistinctUserIds(db);
+            if (userIds.length === 1) {
+              targetUserId = userIds[0];
+            } else if (userIds.length === 0) {
+              throw new HttpError(
+                400,
+                'No users found in Stat Tracker database yet. Sign in with Google once or set STAT_TRACKER_API_USER_ID.'
+              );
+            } else {
+              throw new HttpError(
+                400,
+                'Multiple users exist in Stat Tracker database. Set STAT_TRACKER_API_USER_ID on the server to select which user to export.'
+              );
+            }
+          }
+        } else {
+          const user = requireUser(req);
+          targetUserId = user.id;
+        }
+        const state = getUserState(db, targetUserId);
         sendJson(res, 200, {
           ...state,
           syncedAt: new Date().toISOString(),
