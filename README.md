@@ -47,4 +47,5 @@ npm test
    - `STAT_TRACKER_DB_PATH=/data/stat-tracker.db`
    - `AUTH_GOOGLE_ID=<your-google-oauth-client-id>`
    - `AUTH_GOOGLE_SECRET=<your-google-oauth-client-secret>`
+   - (Optional, for read-only CLI exports via `Authorization: Bearer <key>` on `GET /api/state`): `STAT_TRACKER_API_KEY=<random-secret>` (and `STAT_TRACKER_API_USER_ID=google:<sub_id>` if multiple users exist in SQLite)
 5. (Optional) Set Railway's Healthcheck Path to `/api/health`.
